@@ -1,5 +1,5 @@
 #+OPTIONS: toc:nil
-#+PROPERTY: header-args:jupyter-julia :session MFImpl :kernel julia :eval no-export :async yes :exports both
+#+PROPERTY: header-args:jupyter-julia :session DevNotes :kernel julia :eval no-export :async yes :exports both
 
 
 #+TITLE: Multilinear Forms: Implementation Notes
@@ -106,14 +106,6 @@ let # SDims = NTuple{4,3}
 end;
 #+end_src
 
-#+RESULTS:
-:   Iteration over `CartesianIndices`
-:   87.993 ns (0 allocations: 0 bytes)
-:   Using `Base.Cartesian`
-:   14.486 ns (0 allocations: 0 bytes)
-: `SArray` via `sacollect`
-:   11.057 ns (0 allocations: 0 bytes)
-
 ~sacollect~ is most efficient because it effectively unrolls all the loops.
 However, using approaches with looping might be beneficial in cases where loop unrolling would create too much work for the compiler.
 We will try to sacrifice as little performance over these "baseline" indical functions as possible in our implementation below.
@@ -128,6 +120,7 @@ We therefore define a special type to represent such standard unit vectors.
 using LinearAlgebra
 
 import LinearAlgebra: dot
+import StaticArrays: same_size, _vecdot
 import Base: (==)
 
 # TODO: build these up
@@ -138,14 +131,16 @@ struct StandardBasis{D} end
 # dualbasis(StandardBasis{3}) === StandardBasis{3}()
 # Then, we could move to arbitrary sets of basis vectors ...
 
-struct StdUnitVector{D} <: AbstractVector{Bool} # <: StaticVector{D,Bool}
+struct StdUnitVector{D} <: StaticVector{D,Bool}
     direction::Int
-    Base.@propagate_inbounds function StdUnitVector{D}(d::Int) where D
+    @inline function StdUnitVector{D}(d::Int) where D
         _check_dimensionality(Val(D))
         @boundscheck _check_direction(Val(D), d)
         new(d)
     end
 end
+
+# Could also define the notion of a scaled unit vector
 
 @inline _check_dimensionality(::Val{D}) where D =
     D isa Int && D > 0 || _throw_dimensionality_error(D)
@@ -171,9 +166,9 @@ Returns an `Int` indicatring the direction in which `e` points.
 """
 @inline direction(e::StdUnitVector) = e.direction
 
-@inline Base.length(::StdUnitVector{D}) where D = D
-@inline Base.size(e::StdUnitVector) = (length(e),)
-Base.IndexStyle(::StdUnitVector) = IndexLinear()
+# @inline Base.length(::StdUnitVector{D}) where D = D
+# @inline Base.size(e::StdUnitVector) = (length(e),)
+# Base.IndexStyle(::StdUnitVector) = IndexLinear()
 
 ==(es::StdUnitVector...) = ===(es...)
 
@@ -185,32 +180,32 @@ end
 
 Base.show(io::IO, e::StdUnitVector{D}) where D = print(io, "𝐞{$D}_$(direction(e))")
 
-# ---
-# Old dot implementation
-@inline dot(e1::StdUnitVector{D}, e2::StdUnitVector{D}) where D =
-    e1 === e2
+# The dot product
 
-# Fallback: fail because vectors have different lengths
-@noinline dot(::StdUnitVector, ::StdUnitVector) =
-    throw(DimensionMismatch("unit vectors have different dimensions."))
+@inline dot(e1::StdUnitVector, e2::StdUnitVector) =
+    (same_size(e1, e2); e1 === e2)
 
+# @inline dot(e::StdUnitVector{D}, v::StaticVector{D}) where D =
+#     (@boundscheck _check_dot(e, v); @inbounds v[direction(e)])
 
-@inline dot(e::StdUnitVector{D}, v::AbstractVector) where D =
-    (@boundscheck _check_dot(e, v); @inbounds v[direction(e)])
+@inline dot(e::StdUnitVector, v::StaticVector) =
+    _vecdot(same_size(e, v), e, v, dot)
+@inline dot(v::StaticVector, e::StdUnitVector) = dot(e, v)
 
-# Commutivity of the dot product
-@inline dot(a::AbstractVector, e::StdUnitVector) = e ⋅ a
-
-@inline function _check_dot(v1, v2)
-    (len1 = length(v1)) == (len2 = length(v2)) ||
-        _throw_dimension_mismatch(len1, len2)
+@inline function _vecdot(sz::Size, a::StdUnitVector, b::StaticArray, ::typeof(dot))
+    # eltype(StdUnitVector) == `Bool` so...
+    @assert promote_type(eltype(a), eltype(b)) === eltype(b)
+    if Length(sz) == 0  # No elements!
+        # should be unreachable because there is no zero-dimensional unit vector
+        zero(eltype(b))
+    else
+        @inbounds b[direction(a)]
+    end
 end
 
-@noinline function _throw_dimension_mismatch(len1, len2)
-    @assert len1 ≠ len2
-    msg = "first vector has length $len1 which does not match the length of the second, $len2."
-    throw(DimensionMismatch(msg))
-end
+@inline dot(e::StdUnitVector, v::AbstractArray) =
+    dot(e, SizedVector{Length(e)}(v))
+@inline dot(v::AbstractArray, e::StdUnitVector) = dot(e, v)
 
 # TODO: add specialized arithmetic operations +, -,
 # scalar and matrix multiplication (*), etc.
@@ -232,12 +227,6 @@ let e = basis(StdUnitVector{3})
 end
 #+end_src
 
-#+RESULTS:
-: 3×3 Matrix{Bool}:
-:  1  0  0
-:  0  1  0
-:  0  0  1
-
 ** Tests
 
 #+begin_src jupyter-julia
@@ -245,7 +234,7 @@ using Test
 
 @testset "Unit Vectors" begin
     # Construction
-    @test StdUnitVector{2}(1) isa AbstractVector{Bool}
+    @test StdUnitVector{2}(1) isa StaticVector{2,Bool}
     @test length(StdUnitVector{2}(1)) == only(size(StdUnitVector{2}(1)))
     @test_throws DomainError StdUnitVector{2}(3)
     @test_throws DomainError StdUnitVector{1}(0)
@@ -263,62 +252,40 @@ using Test
     @test !(StdUnitVector{2}(2) ⋅ StdUnitVector{2}(1))
     @test StdUnitVector{2}(1) ⋅ [1,2] == [1,2] ⋅ StdUnitVector{2}(1) == 1
     @test StdUnitVector{2}(2) ⋅ [1,2] == [1,2] ⋅ StdUnitVector{2}(2) == 2
-    @test_throws DimensionMismatch StdUnitVector{1}(1) ⋅ StdUnitVector{2}(1)
-    @test_throws DimensionMismatch StdUnitVector{1}(1) ⋅ [1,2]
+    @test StdUnitVector{2}(1) ⋅ SVector(1,2) == SVector(1,2) ⋅ StdUnitVector{2}(1) == 1
+    @test StdUnitVector{2}(2) ⋅ [1,2] == [1,2] ⋅ StdUnitVector{2}(2) == 2
+    @test_throws DimensionMismatch StdUnitVector{2}(1) ⋅ StdUnitVector{1}(1)
+    @test_throws DimensionMismatch SVector(1,2) ⋅ StdUnitVector{1}(1)
+    @test_throws DimensionMismatch [1,2] ⋅ StdUnitVector{1}(1)
     # Other
-    @test @inferred(StdUnitVector{2}(1) + StdUnitVector{2}(2)) == ones(SVector{2})
-    @test_broken StdUnitVector{2}(1) + StdUnitVector{2}(2) === ones(SVector{2})
+    @test StdUnitVector{2}(1) + StdUnitVector{2}(2) === ones(SVector{2,eltype(true+true)})
     @test @inferred(StdUnitVector{2}(2) + [1,0]) == ones(2)
 end;
 #+end_src
-
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[33m[1mBroken  [22m[39m[36m[1mTotal[22m[39m
-: Unit Vectors  | [32m  20  [39m[33m     1  [39m[36m   21[39m
 
 
 ** Performance
 
 We can check for any over direct comparison of the indices, and there seems to be none.
 #+begin_src jupyter-julia
-out1 = @btime(
-    begin
-        @inbounds for j ∈ axes(A,2), i ∈ axes(A,1)
-            A[i,j] = (i == j)
-        end
-        A
-    end,
-    setup=(A = MMatrix{3,3,Bool}(undef);)
-)
-out2 = @btime(
-    begin @inbounds for j ∈ axes(A,2), i ∈ axes(A,1)
-        A[i,j] = _inner(StdUnitVector{3}(i), StdUnitVector{3}(j))
+@btime(
+    begin for l ∈ axes(A,4), k ∈ axes(A,3), j ∈ axes(A,2), i ∈ axes(A,1)
+        @inbounds A[i,j,k,l] = _skew(StdUnitVector{3}(i), StdUnitVector{3}(j), StdUnitVector{3}(k), StdUnitVector{3}(l))
     end
     A
     end,
-    setup=(A = MMatrix{3,3,Bool}(undef))
-)
-@assert out1 == out2
+    setup=(A = MArray{NTuple{4,3}, Int64}(undef))
+);
 #+end_src
-
-#+RESULTS:
-:   1.327 ns (0 allocations: 0 bytes)
-:   1.396 ns (0 allocations: 0 bytes)
 
 #+begin_src jupyter-julia :results scalar
 @inline inds2uvecs(inds::Vararg{Int}) = map(StdUnitVector{3}, inds)
-@inline inds2uvecs(I::CartesianIndex) = map(StdUnitVector{3}, Tuple(I))
+# @inline inds2uvecs(I::CartesianIndex) = map(StdUnitVector{3}, Tuple(I))
 out1 = @btime fillfn_basecartesian!(A, skew_ixfn) setup=(A = MArray{NTuple{4,3},Int64}(undef))
-out2 = @btime fillfn_basecartesian!(A, _skew ∘ inds2uvecs) setup=(A = MArray{NTuple{4,3},Int64}(undef));
+out2 = @btime(fillfn_basecartesian!(A, _skew ∘ inds2uvecs),
+              setup=(A = MArray{NTuple{4,3},Int64}(undef)))
 out1 == out2
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   14.276 ns (0 allocations: 0 bytes)
-:   46.726 ns (0 allocations: 0 bytes)
-: true
-:END:
 
 
 * Multilinear Forms
@@ -376,21 +343,8 @@ let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
     @assert 1 == @btime($inner($(u,u)))
     println("Contraction, form of order $(order(skew)) in $(dimension(skew)) dimensions")
     @assert 1 == @btime($skew($(u,v,u,v)))
-    methods(inner)
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-: Contraction, form of order 2 in 3 dimensions
-:   1.396 ns (0 allocations: 0 bytes)
-: Contraction, form of order 4 in 3 dimensions
-:   3.771 ns (0 allocations: 0 bytes)
-: # 3 methods:
-: [1] (mf::MultilinearForm{K, D})(vs::Tuple{Vararg{StaticVector{D}, K}}) where {K, D} in Main at In[16]:21
-: [2] (mf::MultilinearForm{K, D})(args::Tuple{Vararg{Union{Colon, StaticVector{D}}, K}}) where {K, D} in Main at In[13]:31
-: [3] (mf::AbstractMultilinearForm{K})(vs::Vararg{Any, K}) where K in Main at In[16]:13
-:END:
 
 We can think of a ~MultilinearForm~ applied to only ~N~ of its ~K~ arguments as a similar multilinear form of order ~K-N~.
 We call such a multilinear form "contracted".
@@ -495,141 +449,7 @@ end
 end;
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-#+begin_example
-Multilinear Form -> Scalar: [91m[1mError During Test[22m[39m at [39m[1mIn[14]:8[22m
-  Test threw exception
-  Expression: inner(u, u) == 1
-  MethodError: no method matching (::MultilinearForm{2, 2, typeof(_inner)})(::Tuple{StdUnitVector{2}, StdUnitVector{2}})
-  [0mClosest candidates are:
-  [0m  (::AbstractMultilinearForm{K})(::Any...) where K at In[11]:13
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{StaticVector{D}, K}}[39m) where {K, D} at In[11]:21
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{Union{Colon, StaticVector{D}}, K}}[39m) where {K, D} at In[13]:31
-  Stacktrace:
-   [1] [0m[1m(::MultilinearForm{2, 2, typeof(_inner)})[22m[0m[1m([22m::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m[0m[1m)[22m
-  [90m   @ [39m[35mMain[39m [90m./[39m[90m[4mIn[11]:13[24m[39m
-   [2] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:445[24m[39m[90m [inlined][39m
-   [3] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m[4mIn[14]:8[24m[39m[90m [inlined][39m
-   [4] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:1283[24m[39m[90m [inlined][39m
-   [5] top-level scope
-  [90m   @ [39m[90m[4mIn[14]:4[24m[39m
-Multilinear Form -> Scalar: [91m[1mError During Test[22m[39m at [39m[1mIn[14]:9[22m
-  Test threw exception
-  Expression: inner(u, v) == 0
-  MethodError: no method matching (::MultilinearForm{2, 2, typeof(_inner)})(::Tuple{StdUnitVector{2}, StdUnitVector{2}})
-  [0mClosest candidates are:
-  [0m  (::AbstractMultilinearForm{K})(::Any...) where K at In[11]:13
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{StaticVector{D}, K}}[39m) where {K, D} at In[11]:21
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{Union{Colon, StaticVector{D}}, K}}[39m) where {K, D} at In[13]:31
-  Stacktrace:
-   [1] [0m[1m(::MultilinearForm{2, 2, typeof(_inner)})[22m[0m[1m([22m::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m[0m[1m)[22m
-  [90m   @ [39m[35mMain[39m [90m./[39m[90m[4mIn[11]:13[24m[39m
-   [2] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:445[24m[39m[90m [inlined][39m
-   [3] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m[4mIn[14]:9[24m[39m[90m [inlined][39m
-   [4] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:1283[24m[39m[90m [inlined][39m
-   [5] top-level scope
-  [90m   @ [39m[90m[4mIn[14]:4[24m[39m
-Multilinear Form -> Scalar: [91m[1mError During Test[22m[39m at [39m[1mIn[14]:10[22m
-  Test threw exception
-  Expression: inner(v, u) == 0
-  MethodError: no method matching (::MultilinearForm{2, 2, typeof(_inner)})(::Tuple{StdUnitVector{2}, StdUnitVector{2}})
-  [0mClosest candidates are:
-  [0m  (::AbstractMultilinearForm{K})(::Any...) where K at In[11]:13
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{StaticVector{D}, K}}[39m) where {K, D} at In[11]:21
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{Union{Colon, StaticVector{D}}, K}}[39m) where {K, D} at In[13]:31
-  Stacktrace:
-   [1] [0m[1m(::MultilinearForm{2, 2, typeof(_inner)})[22m[0m[1m([22m::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m[0m[1m)[22m
-  [90m   @ [39m[35mMain[39m [90m./[39m[90m[4mIn[11]:13[24m[39m
-   [2] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:445[24m[39m[90m [inlined][39m
-   [3] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m[4mIn[14]:10[24m[39m[90m [inlined][39m
-   [4] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:1283[24m[39m[90m [inlined][39m
-   [5] top-level scope
-  [90m   @ [39m[90m[4mIn[14]:4[24m[39m
-Multilinear Form -> Scalar: [91m[1mError During Test[22m[39m at [39m[1mIn[14]:11[22m
-  Test threw exception
-  Expression: skew(u, u, v, v) == 0
-  MethodError: no method matching (::MultilinearForm{4, 2, typeof(_skew)})(::NTuple{4, StdUnitVector{2}})
-  [0mClosest candidates are:
-  [0m  (::AbstractMultilinearForm{K})(::Any...) where K at In[11]:13
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{StaticVector{D}, K}}[39m) where {K, D} at In[11]:21
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{Union{Colon, StaticVector{D}}, K}}[39m) where {K, D} at In[13]:31
-  Stacktrace:
-   [1] [0m[1m(::MultilinearForm{4, 2, typeof(_skew)})[22m[0m[1m([22m::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m[0m[1m)[22m
-  [90m   @ [39m[35mMain[39m [90m./[39m[90m[4mIn[11]:13[24m[39m
-   [2] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:445[24m[39m[90m [inlined][39m
-   [3] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m[4mIn[14]:11[24m[39m[90m [inlined][39m
-   [4] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:1283[24m[39m[90m [inlined][39m
-   [5] top-level scope
-  [90m   @ [39m[90m[4mIn[14]:4[24m[39m
-Multilinear Form -> Scalar: [91m[1mError During Test[22m[39m at [39m[1mIn[14]:12[22m
-  Test threw exception
-  Expression: skew(u, v, u, v) == 1
-  MethodError: no method matching (::MultilinearForm{4, 2, typeof(_skew)})(::NTuple{4, StdUnitVector{2}})
-  [0mClosest candidates are:
-  [0m  (::AbstractMultilinearForm{K})(::Any...) where K at In[11]:13
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{StaticVector{D}, K}}[39m) where {K, D} at In[11]:21
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{Union{Colon, StaticVector{D}}, K}}[39m) where {K, D} at In[13]:31
-  Stacktrace:
-   [1] [0m[1m(::MultilinearForm{4, 2, typeof(_skew)})[22m[0m[1m([22m::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m[0m[1m)[22m
-  [90m   @ [39m[35mMain[39m [90m./[39m[90m[4mIn[11]:13[24m[39m
-   [2] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:445[24m[39m[90m [inlined][39m
-   [3] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m[4mIn[14]:12[24m[39m[90m [inlined][39m
-   [4] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:1283[24m[39m[90m [inlined][39m
-   [5] top-level scope
-  [90m   @ [39m[90m[4mIn[14]:4[24m[39m
-Multilinear Form -> Scalar: [91m[1mError During Test[22m[39m at [39m[1mIn[14]:13[22m
-  Test threw exception
-  Expression: skew(u, v, v, u) == -1
-  MethodError: no method matching (::MultilinearForm{4, 2, typeof(_skew)})(::NTuple{4, StdUnitVector{2}})
-  [0mClosest candidates are:
-  [0m  (::AbstractMultilinearForm{K})(::Any...) where K at In[11]:13
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{StaticVector{D}, K}}[39m) where {K, D} at In[11]:21
-  [0m  (::MultilinearForm{K, D})([91m::Tuple{Vararg{Union{Colon, StaticVector{D}}, K}}[39m) where {K, D} at In[13]:31
-  Stacktrace:
-   [1] [0m[1m(::MultilinearForm{4, 2, typeof(_skew)})[22m[0m[1m([22m::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m, ::[0mStdUnitVector[90m{2}[39m[0m[1m)[22m
-  [90m   @ [39m[35mMain[39m [90m./[39m[90m[4mIn[11]:13[24m[39m
-   [2] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:445[24m[39m[90m [inlined][39m
-   [3] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m[4mIn[14]:13[24m[39m[90m [inlined][39m
-   [4] [0m[1mmacro expansion[22m
-  [90m   @ [39m[90m/usr/share/julia/stdlib/v1.7/Test/src/[39m[90m[4mTest.jl:1283[24m[39m[90m [inlined][39m
-   [5] top-level scope
-  [90m   @ [39m[90m[4mIn[14]:4[24m[39m
-[0m[1mTest Summary:              | [22m[91m[1mError  [22m[39m[36m[1mTotal[22m[39m
-Multilinear Form -> Scalar | [91m    6  [39m[36m    6[39m
-#+end_example
-# [goto error]
-#+begin_example
-[91mSome tests did not pass: 0 passed, 0 failed, 6 errored, 0 broken.[39m
 
-Stacktrace:
- [1] macro expansion
-   @ /usr/share/julia/stdlib/v1.7/Test/src/Test.jl:1294 [inlined]
- [2] top-level scope
-   @ In[14]:4
- [3] eval
-   @ ./boot.jl:373 [inlined]
- [4] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-   @ Base ./loading.jl:1196
-#+end_example
-:END:
 * Iteration and collection into arrays
 
 If we evaluate ~inner~ where the arguments are all unit vectors, we find that we have a lazy representation of the identity tensor, since \(e_i ⋅ e_j = δ_{ij}\) is equivalent to the Kronecker delta (one if \(i=j\) and zero otherwise).
@@ -640,12 +460,6 @@ let e = basis(StdUnitVector{3})
     [inner(e[i], e[j]) for j ∈ eachindex(e), i ∈ eachindex(e)]
 end
 #+end_src
-
-#+RESULTS:
-: 3×3 Matrix{Bool}:
-:  1  0  0
-:  0  1  0
-:  0  0  1
 
 Some convenience is provided by implementing the [[https://docs.julialang.org/en/v1/manual/interfaces/][iteration and indexing interfaces]] for ~MultilinearForm~​s.
 This will allow us to "materialize" a ~MultilinearForm~ into an array container like ~Array~ or ~SArray~ using ~collect~ or ~StaticArrays.sacollect~, respectively.
@@ -708,6 +522,13 @@ Base.CartesianIndices(::AbstractMultilinearForm{K,D}) where {K,D} =
 
 @inline Base.lastindex(mf::AbstractMultilinearForm) = Base.last(CartesianIndices(mf))
 
+# TODO: Abstract (and Static) array (although not a subtype for now)
+
+StaticArrays.similar_type(T::Type{<:MultilinearForm{K,D}}, ::Type{E}, ::Size{S}) where {K,D,E,S} =
+    SArray{NTuple{K,D},E}
+
+
+# Base.similar(mf::MultilinearForm, ::Type{T}, size::Dims) =
 #+end_src
 
 Now, forming the identity matrix is super simple:
@@ -728,134 +549,39 @@ let inner = MultilinearForm{2,3}(_inner)
     @test collect(e1) == StdUnitVector{3}(1)
     # Collect into an SArray
     @test StaticArrays.sacollect(SVector{3}, e1) == StdUnitVector{3}(1)
-    @btime StaticArrays.sacollect(SMatrix{3,3}, MultilinearForm{4,3}(_skew)(:,:, StdUnitVector{3}(3), StdUnitVector{3}(2)))
+    @btime StaticArrays.sacollect(SArray{NTuple{4,3}}, MultilinearForm{4,3}(_skew))
+    out1 = @btime StaticArrays.sacollect(SArray{NTuple{4,3}}, MultilinearForm{4,3}(_skew))[:,:,3,2]
+    out2 = @btime StaticArrays.sacollect(SMatrix{3,3}, MultilinearForm{4,3}(_skew)(:,:, StdUnitVector{3}(3), StdUnitVector{3}(2)))
+    @assert out1 == out2
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   0.838 ns (0 allocations: 0 bytes)
-: 3×3 SMatrix{3, 3, Int64, 9} with indices SOneTo(3)×SOneTo(3):
-:  0  0   0
-:  0  0  -1
-:  0  1   0
-:END:
-
-Let's make a couple of functions for collecting components.
+Let's make a functions dumping components into an arbitrary container.
 #+begin_src jupyter-julia
-function components!(tgt::AbstractArray, form::MultilinearForm{K}) where K
-    collect()
+function components!(tgt::AbstractArray, mf::MultilinearForm)
+    same_size(mf, tgt)
+    _unsafe_fill_components!(tgt, mf)
 end
+
+@generated function _unsafe_fill_components!(tgt::AbstractArray{<:Any,K}, mf::MultilinearForm{K}) where K
+    # @inbounds this when ready to make this not safe
+    quote
+        @nloops $K i tgt begin
+            (@nref $K tgt i) = (@nref $K mf i)
+        end
+        tgt
+    end
+end
+#+end_src
+
+#+begin_src jupyter-julia
+@btime components!(A, mf) setup=begin
+    mf = MultilinearForm{4,3}(_skew)
+    A = MArray{NTuple{4,3}, eltype(mf)}(undef)
+end;
 #+end_src
 
 ** Tests
-
-#+begin_src jupyter-julia :results silent
-# Some different ways to collect a form into an array
-function formfill_iterate!(buf, form::F) where F
-    # indices = SOneTo(3)
-    # for j ∈ indices, i ∈ indices
-    #     buf[i,j] = form[i,j]
-    # end
-    @inbounds for (i,elem) ∈ enumerate(form)
-        buf[i] = elem
-    end
-    return buf
-end
-
-function formfill_cartesian!(buf, form::F) where F
-    @inbounds for I ∈ CartesianIndices(form)
-        buf[I] = form[I]
-    end
-    return buf
-end
-
-function formfill_S4(buf, form::AbstractMultilinearForm{4,D}) where D
-    axs = SOneTo(D)
-    for l ∈ axs, k ∈ axs, j ∈ axs, i ∈ axs
-        I = CartesianIndex()
-        buf[i,j,k,l] = form[i,j,k,l]
-    end
-    return buf
-end
-
-function formfill_4(buf, form::AbstractMultilinearForm{4,D}) where D
-    axs = Base.OneTo(D)
-    for l ∈ axs, k ∈ axs, j ∈ axs, i ∈ axs
-        buf[i,j,k,l] = form[i,j,k,l]
-    end
-    return buf
-end
-#+end_src
-
-#+begin_src jupyter-julia :results scalar
-using BenchmarkTools
-let skew = MultilinearForm{4,3}(_skew)
-    M = MArray{NTuple{4,3}, Int64}(undef)
-    # M = Array{Int64,4}(undef, 3,3,3,3)
-    @btime formfill_iterate!(M, $skew) setup=(M=$M)
-    @btime formfill_cartesian!(M, $skew) setup=(M=$M)
-    @btime formfill_S4(M, $skew) setup=(M=$M)
-    @btime formfill_4(M, $skew) setup=(M=$M)
-    @btime StaticArrays.sacollect(SArray{NTuple{4,3}}, $skew)
-end
-#+end_src
-
-#+RESULTS:
-:RESULTS:
-:   126.465 ns (0 allocations: 0 bytes)
-:   90.224 ns (0 allocations: 0 bytes)
-:   47.150 ns (0 allocations: 0 bytes)
-:   29.691 ns (0 allocations: 0 bytes)
-:   10.976 ns (0 allocations: 0 bytes)
-#+begin_example
-3×3×3×3 SArray{NTuple{4, 3}, Int64, 4, 81} with indices SOneTo(3)×SOneTo(3)×SOneTo(3)×SOneTo(3):
-[:, :, 1, 1] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 2, 1] =
- 0  -1  0
- 1   0  0
- 0   0  0
-
-[:, :, 3, 1] =
- 0  0  -1
- 0  0   0
- 1  0   0
-
-[:, :, 1, 2] =
-  0  1  0
- -1  0  0
-  0  0  0
-
-[:, :, 2, 2] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 3, 2] =
- 0  0   0
- 0  0  -1
- 0  1   0
-
-[:, :, 1, 3] =
-  0  0  1
-  0  0  0
- -1  0  0
-
-[:, :, 2, 3] =
- 0   0  0
- 0   0  1
- 0  -1  0
-
-[:, :, 3, 3] =
- 0  0  0
- 0  0  0
- 0  0  0
-#+end_example
-:END:
 
 #+begin_src jupyter-julia
 let D = 3
@@ -863,18 +589,11 @@ let D = 3
     skew = MultilinearForm{4,D}(_skew)
     solo = MultilinearForm{0,D}(() -> 1.0)
     e = basis(StdUnitVector{D})
+    @btime StaticArrays.sacollect(SArray{Tuple{}}, $solo)
     @btime StaticArrays.sacollect(SMatrix{3,3}, $skew(:, $e[2], :, $e[3]))
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   2.305 ns (0 allocations: 0 bytes)
-: 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
-:  0.5  0.0  0.0
-:  0.0  0.5  0.0
-:  0.0  0.0  0.5
-:END:
 
 
 
