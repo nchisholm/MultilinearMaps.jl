@@ -8,7 +8,7 @@
 * Intro
 
 [[https://en.wikipedia.org/wiki/Multilinear_form][Multilinear forms]] map \(K\) \(D\)-dimensional vectors to a scalar quantity.
-An important example of a multilinear form is the standard inner product (dot product) of vectors, which is a bilinear form (also called a 2-linear form or a \(2\)nd order multilinear form).
+An important example of a multilinear form is the standard inner product (dot product) of vectors, which is a bilinear form (also called a 2-linear form or a 2nd order multilinear form).
 #+begin_src jupyter-julia :results silent
 using LinearAlgebra
 @inline _inner(v1, v2) = v1 ⋅ v2
@@ -120,7 +120,7 @@ We therefore define a special type to represent such standard unit vectors.
 using LinearAlgebra
 
 import LinearAlgebra: dot
-import StaticArrays: same_size, _vecdot
+import StaticArrays: same_size, size_tuple, _vecdot
 import Base: (==)
 
 # TODO: build these up
@@ -204,7 +204,7 @@ Base.show(io::IO, e::StdUnitVector{D}) where D = print(io, "𝐞{$D}_$(direction
 end
 
 @inline dot(e::StdUnitVector, v::AbstractArray) =
-    dot(e, SizedVector{Length(e)}(v))
+    dot(e, SizedArray{size_tuple(Size(e))}(v))
 @inline dot(v::AbstractArray, e::StdUnitVector) = dot(e, v)
 
 # TODO: add specialized arithmetic operations +, -,
@@ -263,10 +263,9 @@ using Test
 end;
 #+end_src
 
-
 ** Performance
 
-We can check for any over direct comparison of the indices, and there seems to be none.
+We can check for any overhead compared to direct computation on the indices, and there seems to be none.
 #+begin_src jupyter-julia
 @btime(
     begin for l ∈ axes(A,4), k ∈ axes(A,3), j ∈ axes(A,2), i ∈ axes(A,1)
@@ -288,7 +287,7 @@ out1 == out2
 #+end_src
 
 
-* Multilinear Forms
+* Multilinear forms
 
 Below, we define a callable type ~MultilinearForm~ whose instances represent multilinear forms.
 ~MultilinearForm~ is constructed by passing an "implementation" function like ~_inner~ or ~_skew~.
@@ -449,8 +448,16 @@ end
 end;
 #+end_src
 
+#+begin_src jupyter-julia
+let e = basis(StdUnitVector{3})
+    v = SVector{3}(1:3)
+    inner(e[2], v)
+    SArray(inner(v, :))
+end
+#+end_src
 
-* Iteration and collection into arrays
+
+* Interfaces for iteration, indexing, etc.
 
 If we evaluate ~inner~ where the arguments are all unit vectors, we find that we have a lazy representation of the identity tensor, since \(e_i ⋅ e_j = δ_{ij}\) is equivalent to the Kronecker delta (one if \(i=j\) and zero otherwise).
 Below, we use an array comprehension to loop over the unit vectors to produce the identity matrix.
@@ -462,7 +469,7 @@ end
 #+end_src
 
 Some convenience is provided by implementing the [[https://docs.julialang.org/en/v1/manual/interfaces/][iteration and indexing interfaces]] for ~MultilinearForm~​s.
-This will allow us to "materialize" a ~MultilinearForm~ into an array container like ~Array~ or ~SArray~ using ~collect~ or ~StaticArrays.sacollect~, respectively.
+This will allow us to "collect" a ~MultilinearForm~ into an array container like ~Array~ or ~SArray~ using ~collect~ or ~StaticArrays.sacollect~, respectively.
 Indexing is done my converting each index to a corresponding ~StdUnitVector~ like ~mf[i,j,...] = mf(StdUnitVector{3}(i), StdUnitVector{3}(j), ...)~, to provide a convenience shorthand.
 The methods necessary to make this work are implemented below.
 
@@ -491,21 +498,22 @@ Base.IteratorSize(::Type{<:AbstractMultilinearForm{K}}) where K = Base.HasShape{
 Base.IndexStyle(::Type{<:AbstractMultilinearForm}) = IndexCartesian()
 Base.IndexStyle(mf::AbstractMultilinearForm) = Base.IndexStyle(typeof(mf))
 
-Base.eltype(mf::AbstractMultilinearForm) = eltype(first(mf))
+@inline Base.eltype(mf::AbstractMultilinearForm) = eltype(first(mf))
 
-Base.size(mf::AbstractMultilinearForm) = Tuple(Size(mf))
-Base.size(mf::AbstractMultilinearForm{K,D}, dim::Int) where {K,D} =
+@inline Base.size(mf::AbstractMultilinearForm) = Tuple(Size(mf))
+@inline Base.size(mf::AbstractMultilinearForm{K,D}, dim::Int) where {K,D} =
     dim ∈ 1:K ? D : 1
 
-Base.length(mf::AbstractMultilinearForm) = Int(Length(mf))
+@inline Base.length(mf::AbstractMultilinearForm) = Int(Length(mf))
 
 # Static Array triats
 
-StaticArrays.Size(::AbstractMultilinearForm{K,D}) where {K,D} =
+@inline StaticArrays.Size(::Type{<:AbstractMultilinearForm{K,D}}) where {K,D} =
     Size(ntuple(_ -> D, Val(K)))
+@inline StaticArrays.Size(mf::AbstractMultilinearForm) = Size(typeof(mf))
 
-StaticArrays.Length(mf::AbstractMultilinearForm{K,D}) where {K,D} =
-    Length(Size(mf))
+@inline StaticArrays.Length(MF::Type{<:AbstractMultilinearForm}) = Length(Size(MF))
+@inline StaticArrays.Length(mf::AbstractMultilinearForm) = Length(Size(mf))
 
 # Indexing
 
@@ -521,43 +529,100 @@ Base.CartesianIndices(::AbstractMultilinearForm{K,D}) where {K,D} =
 @inline Base.firstindex(mf::AbstractMultilinearForm) = Base.first(CartesianIndices(mf))
 
 @inline Base.lastindex(mf::AbstractMultilinearForm) = Base.last(CartesianIndices(mf))
-
-# TODO: Abstract (and Static) array (although not a subtype for now)
-
-StaticArrays.similar_type(T::Type{<:MultilinearForm{K,D}}, ::Type{E}, ::Size{S}) where {K,D,E,S} =
-    SArray{NTuple{K,D},E}
-
-
-# Base.similar(mf::MultilinearForm, ::Type{T}, size::Dims) =
 #+end_src
 
-Now, forming the identity matrix is super simple:
+The ~containertype~ function takes a container type ~T~ and a ~MultilinearForm~ and produces a possibly more specific appropriate container type.
+It also checks if the given container type is appropriate.
+The appropriate size (and element type, if needed) is determined from the ~MultilinearForm~.
+We also define methods for ~StaticArrays.similar_type~ and ~Base.similar~ for convenience, which follow the conventions of their behavior as closely as possible.
+
+#+begin_src jupyter-julia :results silent :eval no
+
+# TODO
+function containertype end
+# containertype(MF::Type{<:StaticArray}, mf::MultilinearForm) = SArray{size_tuple(Size(MF))}
+# containertype(MF::Type{<:StaticArray}, mf::MultilinearForm) = SArray{size_tuple(Size(MF))}
+
+StaticArrays.similar_type(MF::Type{<:MultilinearForm}, ElType::Type, S::Size=Size(MF)) =
+    similar_type(SArray, ElType, S)
+
+StaticArrays.similar_type(mf::MultilinearForm, ElType::Type=eltype(mf), S::Size=Size(mf)) =
+    similar_type(SArray, ElType, S)
+
+StaticArrays.similar_type(mf::MultilinearForm, S::Size=Size(mf)) =
+    similar_type(SArray, eltype(mf), S)
+
+Base.similar(MF::Type{<:MultilinearForm}, ElType::Type, S::Size=Size(MF)) =
+    similar_type(MArray, ElType, S)
+
+Base.similar(mf::MultilinearForm, ElType::Type=eltype(mf), S::Size=Size(mf)) =
+    similar_type(MArray, ElType, S)
+
+Base.similar(mf::MultilinearForm, S::Size=Size(mf)) =
+    similar_type(MArray, eltype(mf), S)
+
+Base.similar(mf::MultilinearForm{K}, ::Type{T}, s::Dims) where {K,T} =
+    Array{T,K}(undef, s)
+
+Base.similar(mf::MultilinearForm{K}, s::Dims) where {K,T} =
+    Array{eltype(mf), K}(undef, s)
+#+end_src
+
+Collect into a given container, (implicitly defaulting to a regular ~Array~ if no type argument is passed).
+(/Actually, the above methods for ~similar_type~ may not be needed.  Excluding them for now./)
+
 #+begin_src jupyter-julia :results silent
-let inner = MultilinearForm{2,3}(_inner)
-    # Collect into a regular Matrix
-    @assert collect(inner) == LinearAlgebra.I[1:3, 1:3]
-    # Collect into an SArray
-    @assert StaticArrays.sacollect(SMatrix{3,3}, inner) == LinearAlgebra.I[1:3, 1:3]
+using StaticArrays: sacollect
+
+const inner = MultilinearForm{2,3}(_inner)
+const skew = MultilinearForm{4,3}(_skew)
+
+# ARRGH! We be type pirates
+# Also, this appears to have a small runtime cost, perhaps to compute `eltype(sized_gen)`
+@inline function StaticArrays.sacollect(::Type{SA}, sized_gen) where {SA<:StaticArray}
+    SA′ = similar_type(SA, eltype(sized_gen), Size(sized_gen))
+    return sacollect(SA′, sized_gen)
 end
+
+@inline (::Type{SA})(mf::AbstractMultilinearForm) where {SA<:StaticArray} = sacollect(SA, mf)
 #+end_src
 
-And we can even collect after contraction / "slicing"
+Note that it would be nice if ~sacollect~ had a generic method that could handle iterators that possessed a ~Size~ trait without having to specify the size in the type ~SA~.  We have hacked that together above, but maybe something like this should be considered for inclusion in ~StaticArrays~ itself.
+
+Let's define a few ~MultilinearForms~ (in three dimensions) to work on below.
+#+begin_src jupyter-julia :results silent
+const ê = StdUnitVector
+_just_true() = true
+const solo = MultilinearForm{0,3}(_just_true)
+const inner = MultilinearForm{2,3}(_inner)
+const skew = MultilinearForm{4,3}(_skew)
+#+end_src
+
+
+** Usage
+
+Forming the identity matrix can be done as:
 #+begin_src jupyter-julia
-let inner = MultilinearForm{2,3}(_inner)
-    e1 = inner(:, StdUnitVector{3}(1))  # Extracts first "column"
-    # Collect into a regular Matrix
-    @test collect(e1) == StdUnitVector{3}(1)
-    # Collect into an SArray
-    @test StaticArrays.sacollect(SVector{3}, e1) == StdUnitVector{3}(1)
-    @btime StaticArrays.sacollect(SArray{NTuple{4,3}}, MultilinearForm{4,3}(_skew))
-    out1 = @btime StaticArrays.sacollect(SArray{NTuple{4,3}}, MultilinearForm{4,3}(_skew))[:,:,3,2]
-    out2 = @btime StaticArrays.sacollect(SMatrix{3,3}, MultilinearForm{4,3}(_skew)(:,:, StdUnitVector{3}(3), StdUnitVector{3}(2)))
-    @assert out1 == out2
-end
+collect(inner)
+#+end_src
+
+But, since the size of each dimension is usually small, we integrate with ~StaticArrays~.
+#+begin_src jupyter-julia :results silent
+# Using sacollect
+@assert sacollect(SArray, skew) == sacollect(MArray, skew)
+# Using constructors
+@assert SArray(skew) == MArray(skew)
+#+end_src
+
+** Collection routines
+
+We can collect after contraction / "slicing", too.
+#+begin_src jupyter-julia :results silent
+@assert SArray(skew)[:,:,3,2] == SArray(skew(:,:, ê{3}(3), ê{3}(2)))
 #+end_src
 
 Let's make a functions dumping components into an arbitrary container.
-#+begin_src jupyter-julia
+#+begin_src jupyter-julia :eval no
 function components!(tgt::AbstractArray, mf::MultilinearForm)
     same_size(mf, tgt)
     _unsafe_fill_components!(tgt, mf)
@@ -574,16 +639,23 @@ end
 end
 #+end_src
 
-#+begin_src jupyter-julia
+#+begin_src jupyter-julia :eval no
 @btime components!(A, mf) setup=begin
     mf = MultilinearForm{4,3}(_skew)
     A = MArray{NTuple{4,3}, eltype(mf)}(undef)
 end;
 #+end_src
 
+** Known issues
+
+For some reason, type aliases of ~SArray~ like ~SMatrix~ don't work.
+#+begin_src jupyter-julia
+SMatrix(inner)  # FIXME: this makes to do but is broken.
+#+end_src
+
 ** Tests
 
-#+begin_src jupyter-julia
+#+begin_src jupyter-julia :eval no
 let D = 3
     inner = MultilinearForm{2,D}(_inner)
     skew = MultilinearForm{4,D}(_skew)
@@ -594,6 +666,14 @@ let D = 3
 end
 #+end_src
 
+#+begin_src jupyter-julia
+let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
+    @btime SArray(MultilinearForm{4,3}(_skew))
+    out1 = @btime SArray(skew)[:,:,3,2]
+    out2 = @btime SArray(skew(:,:, ê{3}(3), ê{3}(2)))
+    @test out1 == out2
+end
+#+end_src
 
 
 
