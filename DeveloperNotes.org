@@ -676,20 +676,155 @@ end
 #+end_src
 
 
+* More complex (and useful) multilinear forms
 
+** Spherical harmonics
 
-* Collection into arrays
+The functions below give the spherical harmonics (the traceless symmetric tensors) on \(\mathbb S^2\).
 
-Spatially dependent stuff.
+#+begin_src jupyter-julia
+sphharm30(n̂) = MultilinearForm{0,3}(() -> 1.0)
+sphharm31(n̂) = MultilinearForm{1,3}((v) -> n̂⋅v)
+sphharm32(n̂) = MultilinearForm{2,3}((v1, v2) -> (n̂⋅v1)*(n̂⋅v2) - (v1⋅v2)/3 )
+sphharm33(n̂) = MultilinearForm{3,3}((v1, v2, v3) ->
+    (n̂⋅v1)*(n̂⋅v2)*(n̂⋅v2) - ((v1⋅v2)*(n̂⋅v3) + (v3⋅v1)*(n̂⋅v2) + (v2⋅v3)*(n̂⋅v1))/5)
+out = @btime SArray(sphharm33(x)) setup=(x=normalize(rand(SVector{3})))
+#+end_src
 
-#+begin_src jupyter-julia :results silent
-struct SphericalHarmonic{UV<:StaticVector{<:Any,<:AbstractFloat}}
-    x̂::UV
+These provide nice benchmarks
+#+begin_src jupyter-julia
+let n̂ = rand(SVector{3})
+    (u, v, w) = ntuple(_ -> rand(SVector{3}), Val(3))
+    println("Second order form")
+    println("  all components -> 3x3 matrix")
+    @btime SArray(sphharm32(n̂)) setup=(n̂=$n̂; u=$u; v=$v; w=$w)
+    println("  single contraction -> length-3 vector  (matrix-vector prodct)")
+    @btime SArray(sphharm32(n̂)(:, :)) setup=(n̂=$n̂; u=$u; v=$v; w=$w)
+    println("  double contraction -> scalar  (quadratic form)")
+    @btime sphharm32(n̂)(u, v) setup=(n̂=$n̂; u=$u; v=$v; w=$w)
+    println()
+
+    println("Thrid order form")
+    println("  all components -> 3x3x3 array")
+    @btime SArray(sphharm33(n̂)(:, :, :)) setup=(n̂=$n̂; u=$u; v=$v; w=$w)
+    println("  single contraction -> 3x3 matrix")
+    @btime SArray(sphharm33(n̂)(:, :, w)) setup=(n̂=$n̂; u=$u; v=$v; w=$w)
+    println("  double contraction -> length-3 vector")
+    @btime SArray(sphharm33(n̂)(:, v, w)) setup=(n̂=$n̂; u=$u; v=$v; w=$w)
+    println("  full contraction -> scalar")
+    @btime sphharm33(n̂)(u, v, w) setup=(n̂=$n̂; u=$u; v=$v; w=$w)
+end;
+#+end_src
+
+** Finally, some Stokes-flow hydrodynamics
+
+How about the almighty Stokeslet tensor \(S\) in three dimensions?  In the usual index notation,
+\[ 8π S_{ij}(\vec x) = \frac{δ_{ij}}{r} + \frac{x_i x_j}{r^3}, \]
+where \(\vec x\) is the position vector and \(r = |\vec x|\).
+We can alternatively write the Stokeslet at each point as a multilinear function of two vectors,
+\[ 8π \left. S(\vec e, \vec f) \right|_{x} = \frac{δ_{ij}}{r} + \frac{x_i x_j}{r^3}, \]
+so \(S_{ij}(x) = \left. S(\hat{\vec e}_i, \hat{\vec e}_j) \right|_{x}\).
+
+#+begin_src jupyter-julia
+function stokeslet(x)
+    # For efficiency, pre-compute quantities depending on position (x) alone.
+    # We also reduce division as much as possible in favor multiplication
+    # (faster).
+    recip_r = inv(norm(x))
+    x̂ = x * recip_r
+    prefactor = recip_r / 8π
+
+    # Here is the "implementation" function
+    impl(e, f) = ((e⋅f) + (e⋅x̂)*(x̂⋅f)) * prefactor
+    # (Compare to the usual index notation.)
+
+    # Now make it a second order multilinear form in three dimensions
+    return MultilinearForm{2,3}(impl)
 end
+@btime SArray(stokeslet(x)) setup=(x=SVector{3,Float64}(1.,2,3))
+#+end_src
 
-# @inline (ϕ::SphericalHarmonic{3,0}) = MultilinearForm{0,3}(() -> 1.0)
-# @inline (ϕ::SphericalHarmonic{3,1}) = MultilinearForm{1,3}(v -> ϕ.x̂ ⋅ v)
-# @inline (ϕ::SphericalHarmonic{3,2})(v1,v2) = ϕ(v1) * ϕ(v2) - (v1⋅v2) / 3
-# @inline (ϕ::SphericalHarmonic{3,3})(v1,v2,v3) =
-#     ϕ(v1)*ϕ(v2)*ϕ(v3) - (ϕ(v1)*(v2⋅v3) + ϕ(v2)*(v1⋅v3) + ϕ(v3)*(v1⋅v2)) / 5
+We are left with a matrix of the components of our favorite (symmetric) tensor.
+We can also contract the Stokeslet with a (force) vector to give the Stokeslet velocity field at a given point.
+#+begin_src jupyter-julia
+@btime SArray(stokeslet(x)(:,f)) setup=begin
+    x = SVector{3,Float64}(1,2,3) # Position vector
+    f = SVector{3,Float64}(3,2,1) # Force vector
+end
+#+end_src
+
+If we use a ~StdUnitVector~ as one of the vectors, we should get the corresponding column/row of the Stokeslet as a matrix.
+#+begin_src jupyter-julia
+@btime SArray(stokeslet(x)(:,f)) setup=begin
+    x = SVector{3,Float64}(1,2,3)
+    f = ê{3}(2)
+end
+#+end_src
+
+Computational cost is reduced if you contract the Stokeslet with a vector because the "full" matrix is never formed.
+Contraction with a unit vector is even cheaper, since it is equivalent to forming just one row of the Stokeslet.
+We can even compute just a single component of the velocity as a scalar.
+#+begin_src jupyter-julia
+@btime stokeslet(x)(e,f) setup=begin
+    x = SVector{3,Float64}(1,2,3)
+    # Direction of flow diagonally on xy plane
+    e = normalize(SVector{3,Float64}(1,1,0))
+    f = SVector{3,Float64}(3,2,1)
+end
+#+end_src
+
+As it is possible to pick out a row/column, it is also possible to pick out just one component of the Stokeslet by feeding it two ~StdUnitVector~​s.
+#+begin_src jupyter-julia
+@btime stokeslet(x)(e,f) setup=begin
+    x = SVector{3,Float64}(1,2,3)
+    e = ê{3}(1)
+    f = ê{3}(2)
+end
+#+end_src
+
+Note that, in all cases, most of the computational cost of evaluating a Stokeslet is actually due to computation of the spatial dependence (taking ~norm(x)~, etc.), though this can be somewhat reduced by annotating the definition of ~stokeslet~ with ~@fastmath~.
+#+begin_src jupyter-julia
+@btime stokeslet(x) setup=(x = SVector{3}(1., 2., 3.));
+#+end_src
+
+Without all this machinery, the Stokeslet is not too hard to express using matrix multiplication and ~LinearAlgebra.I~
+#+begin_src jupyter-julia
+function stokeslet2(x)
+    recip_r = inv(norm(x))
+    x̂ = x * recip_r
+    prefactor = recip_r / 8π
+    (SMatrix{3,3,Float64}(I) + x̂*x̂') * prefactor
+end
+@btime stokeslet2(SVector(1.,2,3))
+#+end_src
+
+Somehow, our code is actually a hair faster!
+However, the real advantage is mental workload.
+To get the matrix-vector product to get the fluid velocity, you can either do the inefficient method of calling the function above and then calling ~dot~, or writing a whole separate function to do things the algorithmically more efficient way.
+#+begin_src jupyter-julia
+function stokeslet_dot_f(x, f)
+    recip_r = inv(norm(x))
+    x̂ = x * recip_r
+    prefactor = recip_r / 8π
+    (f + x̂*(x̂⋅f)) * prefactor
+end
+let f = normalize(rand(SVector{3}))
+    x = rand(SVector{3})
+    @btime stokeslet2($x) * $f  # Less efficient
+    @btime stokeslet_dot_f($x, $f)
+end
+#+end_src
+
+If we include third order tensors (e.g. stresslets), the ergonomic advantages of ~MultilinearForms~ are significantly more apparent.
+
+** Known issues
+
+*** Collection to a ~StaticArrays.Scalar~ is broken.
+
+#+begin_src jupyter-julia
+@btime SArray(stokeslet(x)(e,f)) setup=begin
+    x = SVector{3,Float64}(1,2,3)
+    e = SVector{3,Float64}(1,1,1)
+    f = SVector{3,Float64}(3,2,1)
+end
 #+end_src
