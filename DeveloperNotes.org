@@ -351,6 +351,8 @@ Indexing is done by simply converting each index to a corresponding ~StdUnitVect
 The methods necessary to make this work are implemented in [[file:src/MultilinearForms.jl][MultilinearForms.jl]].
 There, we also implement methods for ~StaticArrays.similar_type~ and ~Base.similar~ to provide appropriate types to contain components of ~MultilinearForms~.
 
+Note that when ~@inbounds~ is used, unit vectors are unsafely constructed, without checking if their direction is valid for their dimension.
+
 ** Collection
 
 The identity matrix (~inner~) can now be collected into an array with a single line of code.
@@ -381,11 +383,14 @@ end;
 
 Note that components of the tensor the user has not asked for are never computed.
 
-*** Maybe use this? :noexport:
+*** Maybe use this?
+
 Let's make a functions dumping components into an arbitrary container.
-#+begin_src jupyter-julia :eval no
+#+begin_src jupyter-julia :results silent
+using StaticArrays: same_size
+
 function components!(tgt::AbstractArray, mf::MultilinearForm)
-    same_size(mf, tgt)
+    same_size(tgt, mf)
     _unsafe_fill_components!(tgt, mf)
 end
 
@@ -393,25 +398,18 @@ end
     # @inbounds this when ready to make this not safe
     quote
         @nloops $K i tgt begin
-            (@nref $K tgt i) = (@nref $K mf i)
+            @inbounds (@nref $K tgt i) = (@nref $K mf i)
         end
         tgt
     end
 end
 #+end_src
 
-#+begin_src jupyter-julia :eval no
+#+begin_src jupyter-julia
 @btime components!(A, mf) setup=begin
     mf = MultilinearForm{4,3}(_skew)
-    A = MArray{NTuple{4,3}, eltype(mf)}(undef)
-end;
-#+end_src
-
-** Known issues
-
-For some reason, type aliases of ~SArray~ like ~SMatrix~ don't work.
-#+begin_src jupyter-julia
-SMatrix(inner)  # FIXME: this makes to do but is broken.
+    A = similar(mf)
+end
 #+end_src
 
 ** Validity & Performance Checks
@@ -436,6 +434,13 @@ let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
 end
 #+end_src
 
+
+** Known issues
+
+For some reason, type aliases of ~SArray~ like ~SMatrix~ don't work.
+#+begin_src jupyter-julia
+SMatrix(inner)  # FIXME: this makes to do but is broken.
+#+end_src
 
 * More complex (and useful) multilinear forms
 
@@ -527,7 +532,7 @@ function stokeslet(x)
     # Now make it a second order multilinear form in three dimensions
     return MultilinearForm{2,3}(impl)
 end
-@btime SArray(stokeslet(x)) setup=(x=SVector{3,Float64}(1.,2,3))
+@benchmark SArray(stokeslet(x)) setup=(x=SVector{3,Float64}(1.,2,3))
 #+end_src
 
 We are left with a matrix of the components of our favorite (symmetric) tensor.

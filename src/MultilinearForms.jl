@@ -1,8 +1,10 @@
 module MultilinearForms
 
+using Base: @propagate_inbounds
 using StaticArrays
 
-export AbstractMultilinearForm, MultilinearForm, ContractedMultilinearForm
+export AbstractMultilinearForm, MultilinearForm, ContractedMultilinearForm,
+    dimension, order
 
 include("util.jl")
 include("stdbasis.jl")
@@ -11,14 +13,14 @@ include("stdbasis.jl")
 abstract type AbstractMultilinearForm{K,D} end
 
 # For now, everything is in Cartesian space
-basis(::AbstractMultilinearForm{<:Any,D}) where D = basis(StdUnitVector{D})
+basis(::AbstractMultilinearForm{<:Any,D}) where {D} = basis(StdUnitVector{D})
 
 # Convenient type aliases for passing sets of vectors
 const FormArgs{K,D} = NTuple{K,StaticVector{D}}
 
 # Helper method so we aren't forced to wrap arguments in a tuple. Note that the
 # `::Vararg{K}` is required or things will infinitely recurse.
-(mf::AbstractMultilinearForm{K})(vs::Vararg{Any,K}) where K = mf(vs)
+(mf::AbstractMultilinearForm{K})(vs::Vararg{Any,K}) where {K} = mf(vs)
 
 struct MultilinearForm{K,D,F} <: AbstractMultilinearForm{K,D}
     f::F
@@ -31,19 +33,19 @@ end
 
 # Dimension of the tensor product of vector spaces that the form works on, i.e.,
 # the tensorial order
-order(::Type{<:AbstractMultilinearForm{K}}) where K = K
+order(::Type{<:AbstractMultilinearForm{K}}) where {K} = K
 order(::M) where {M<:AbstractMultilinearForm} = order(M)
 
 # Dimension of the vector space for each individual argument
-dimension(::Type{<:AbstractMultilinearForm{<:Any,D}}) where D = D
+dimension(::Type{<:AbstractMultilinearForm{<:Any,D}}) where {D} = D
 dimension(::M) where {M<:AbstractMultilinearForm} = dimension(M)
 # Call that produces a "contracted" form
 
 const ContractionArgs{K,D} = NTuple{K,Union{StaticVector{D},Colon}}
 
 # Represent a partially contracted form
-struct ContractedMultilinearForm{K, D, K′, M<:MultilinearForm{K′,D},
-                                 T<:ContractionArgs{K′,D}} <: AbstractMultilinearForm{K,D}
+struct ContractedMultilinearForm{K,D,K′,M<:MultilinearForm{K′,D},
+    T<:ContractionArgs{K′,D}} <: AbstractMultilinearForm{K,D}
     parent::M
     args::T
     function ContractedMultilinearForm{K,D,K′}(parent::M, args::T) where {K,D,K′,M,T}
@@ -52,14 +54,14 @@ struct ContractedMultilinearForm{K, D, K′, M<:MultilinearForm{K′,D},
     end
 end
 
-function _contractargs(T::Type{<:ContractedMultilinearForm{K}}) where K
+function _contractargs(T::Type{<:ContractedMultilinearForm{K}}) where {K}
     # We need to intercalate the "concrete" parent arguments with the "free
     # arguments" of the contracted form.
     #
     # Here, we let "vs" be the free arguments and "us" be the parent arguments.
     parent_argTs = fieldtypes(fieldtype(T, :args))
     j = 0
-    [parent_argTs[i] === Colon ? :(vs[$(j+=1)]) : :(cmf.args[$i])
+    [parent_argTs[i] === Colon ? :(vs[$(j += 1)]) : :(cmf.args[$i])
      for i ∈ eachindex(parent_argTs)]
 end
 
@@ -75,7 +77,7 @@ end
     if K′ == K  # All arguments are (:), so this is an identity operation
         :(mf)
     elseif K′ < K
-        :(ContractedMultilinearForm{$K′, D, K}(mf, args))
+        :(ContractedMultilinearForm{$K′,D,K}(mf, args))
     else # should never happen
         :(@assert false)
     end
@@ -115,7 +117,7 @@ end
     end
 end
 
-Base.IteratorSize(::Type{<:AbstractMultilinearForm{K}}) where K = Base.HasShape{K}()
+Base.IteratorSize(::Type{<:AbstractMultilinearForm{K}}) where {K} = Base.HasShape{K}()
 
 Base.IndexStyle(::Type{<:AbstractMultilinearForm}) = IndexCartesian()
 Base.IndexStyle(mf::AbstractMultilinearForm) = Base.IndexStyle(typeof(mf))
@@ -123,7 +125,7 @@ Base.IndexStyle(mf::AbstractMultilinearForm) = Base.IndexStyle(typeof(mf))
 @inline Base.eltype(mf::AbstractMultilinearForm) = eltype(first(mf))
 
 @inline Base.size(mf::AbstractMultilinearForm) = Tuple(Size(mf))
-@inline Base.size(mf::AbstractMultilinearForm{K,D}, dim::Int) where {K,D} =
+@inline Base.size(::AbstractMultilinearForm{K,D}, dim::Int) where {K,D} =
     dim ∈ 1:K ? D : 1
 
 @inline Base.length(mf::AbstractMultilinearForm) = Int(Length(mf))
@@ -162,29 +164,29 @@ Base.CartesianIndices(::AbstractMultilinearForm{K,D}) where {K,D} =
 
 # `similar` and `StaticArrays.similar_type`
 
-StaticArrays.similar_type(MF::Type{<:AbstractMultilinearForm}, ElType::Type, S::Size=Size(MF)) =
+StaticArrays.similar_type(MF::Type{<:AbstractMultilinearForm}, ElType::Type, S::Size = Size(MF)) =
     similar_type(StaticArray, ElType, S)
 
-StaticArrays.similar_type(mf::AbstractMultilinearForm, ElType::Type=eltype(mf), S::Size=Size(mf)) =
+StaticArrays.similar_type(mf::AbstractMultilinearForm, ElType::Type = eltype(mf), S::Size = Size(mf)) =
     similar_type(StaticArray, ElType, S)
 
-StaticArrays.similar_type(mf::AbstractMultilinearForm, S::Size=Size(mf)) =
+StaticArrays.similar_type(mf::AbstractMultilinearForm, S::Size) =
     similar_type(StaticArray, eltype(mf), S)
 
-Base.similar(MF::Type{<:AbstractMultilinearForm}, ElType::Type, S::Size=Size(MF)) =
-    similar_type(MArray, ElType, S)
+Base.similar(MF::Type{<:AbstractMultilinearForm}, ElType::Type, S::Size = Size(MF)) =
+    similar_type(MArray, ElType, S)(undef)
 
-Base.similar(mf::AbstractMultilinearForm, ElType::Type=eltype(mf), S::Size=Size(mf)) =
-    similar_type(MArray, ElType, S)
+Base.similar(mf::AbstractMultilinearForm, ElType::Type = eltype(mf), S::Size = Size(mf)) =
+    similar_type(MArray, ElType, S)(undef)
 
-Base.similar(mf::AbstractMultilinearForm, S::Size=Size(mf)) =
-    similar_type(MArray, eltype(mf), S)
+Base.similar(mf::AbstractMultilinearForm, S::Size) =
+    similar_type(MArray, eltype(mf), S)(undef)
 
-Base.similar(mf::AbstractMultilinearForm{K}, ::Type{T}, s::Dims) where {K,T} =
+Base.similar(::AbstractMultilinearForm{K}, ::Type{T}, s::Dims) where {K,T} =
     Array{T,K}(undef, s)
 
-Base.similar(mf::AbstractMultilinearForm{K}, s::Dims) where {K,T} =
-    Array{eltype(mf), K}(undef, s)
+Base.similar(mf::AbstractMultilinearForm{K}, s::Dims) where {K} =
+    Array{eltype(mf),K}(undef, s)
 
 # AHOY MATIES! We be type pirates here.
 # Also, this appears to have a small runtime cost, perhaps to compute `eltype(sized_gen)`
