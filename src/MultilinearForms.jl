@@ -99,21 +99,20 @@ struct IndexLabel{S} end
 # Interfaces
 # ----------
 
-
 # Iteration
 
 # NOTE inlining is important to performance here
 @inline function Base.iterate(mf::AbstractMultilinearForm)
     # Piggy-back off of iterate(::CartesianIndices)
     (I, state) = iterate(CartesianIndices(mf))
-    return (unsafe_getindex(mf, I), state)
+    return (_getindex(UNSAFE, mf, I), state)
     #   -> (mf[I], state)
     # Should be safe to elide the unit vector validity check
 end
 
-@inline function Base.iterate(mf::AbstractMultilinearForm{K}, state) where K
+@inline function Base.iterate(mf::AbstractMultilinearForm{K}, state) where {K}
     maybe(iterate(CartesianIndices(mf), state)) do (I′, state′)
-        (unsafe_getindex(mf, I′), state′)
+        (_getindex(UNSAFE, mf, I′), state′)
     end
 end
 
@@ -144,23 +143,27 @@ Base.IndexStyle(mf::AbstractMultilinearForm) = Base.IndexStyle(typeof(mf))
 Base.CartesianIndices(::AbstractMultilinearForm{K,D}) where {K,D} =
     CartesianIndices(ntuple(_ -> SOneTo(D), Val(K)))
 
-@inline Base.getindex(mf::AbstractMultilinearForm{K,D}, I::Vararg{Int,K}) where {K,D} =
-    mf(map(StdUnitVector{D}, I))
+# # Old way, in case of performance issues
+# @propagate_inbounds Base.getindex(mf::AbstractMultilinearForm{K,D}, I::Vararg{Int,K}) where {K,D} =
+#     (@boundscheck return mf(map(i -> StdUnitVector{D}(  SAFE, i), I));
+#                   return mf(map(i -> StdUnitVector{D}(UNSAFE, i), I)))
 
-@inline Base.getindex(mf::AbstractMultilinearForm{K}, I::CartesianIndex{K}) where K =
-    Base.getindex(mf, Tuple(I)...)
+@inline _getindex(s::S, mf::AbstractMultilinearForm{K,D}, I::Vararg{Int,K}) where {S<:Safety,K,D} =
+    mf(map(i -> StdUnitVector{D}(s, i), I))
 
-@inline Base.firstindex(mf::AbstractMultilinearForm) = Base.first(CartesianIndices(mf))
+@inline _getindex(s::S, mf::AbstractMultilinearForm{K}, I::CartesianIndex{K}) where {S<:Safety,K} =
+    _getindex(s, mf, Tuple(I)...)
 
-@inline Base.lastindex(mf::AbstractMultilinearForm) = Base.last(CartesianIndices(mf))
+@propagate_inbounds Base.getindex(mf::AbstractMultilinearForm{K,D}, I::Vararg{Int,K}) where {K,D} =
+    _getindex(inbounds_safety(), mf, I...)
 
-# UNSAFE indexing; do not check for validitiy of the StdUnitVectors in each direction
+@propagate_inbounds Base.getindex(mf::AbstractMultilinearForm{K}, I::CartesianIndex{K}) where K =
+    _getindex(inbounds_safety(), mf, Tuple(I)...)
 
-@inline unsafe_getindex(mf::AbstractMultilinearForm{K,D}, I::Vararg{Int,K}) where {K,D} =
-    mf(map(i -> StdUnitVector{D}(UNSAFE, i), I))
+@inline Base.firstindex(mf::AbstractMultilinearForm) = first(CartesianIndices(mf))
 
-@inline unsafe_getindex(mf::AbstractMultilinearForm{K}, I::CartesianIndex{K}) where K =
-    unsafe_getindex(mf, Tuple(I)...)
+@inline Base.lastindex(mf::AbstractMultilinearForm) = last(CartesianIndices(mf))
+
 
 # `similar` and `StaticArrays.similar_type`
 
