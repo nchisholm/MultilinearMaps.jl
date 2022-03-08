@@ -39,13 +39,12 @@ order(::M) where {M<:AbstractMultilinearForm} = order(M)
 # Dimension of the vector space for each individual argument
 dimension(::Type{<:AbstractMultilinearForm{<:Any,D}}) where {D} = D
 dimension(::M) where {M<:AbstractMultilinearForm} = dimension(M)
-# Call that produces a "contracted" form
 
 const ContractionArgs{K,D} = NTuple{K,Union{StaticVector{D},Colon}}
 
 # Represent a partially contracted form
 struct ContractedMultilinearForm{K,D,K′,M<:MultilinearForm{K′,D},
-    T<:ContractionArgs{K′,D}} <: AbstractMultilinearForm{K,D}
+                                 T<:ContractionArgs{K′,D}} <: AbstractMultilinearForm{K,D}
     parent::M
     args::T
     function ContractedMultilinearForm{K,D,K′}(parent::M, args::T) where {K,D,K′,M,T}
@@ -70,7 +69,7 @@ end
     :(cmf.parent.f($(_contractargs(cmf)...)))
 end
 
-
+# Call that produces a "contracted" form
 @generated function (mf::MultilinearForm{K,D})(args::ContractionArgs{K,D}) where {K,D}
     # "Dispatch" is controled by where `:`s appear in `args`.
     K′ = count(arg -> arg === Colon, fieldtypes(args))

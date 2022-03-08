@@ -1,0 +1,771 @@
+#+TITLE: Julia package for Multilinear Forms
+
+#+OPTIONS: toc:nil
+
+:TEX_SETUP:
+#+LATEX_COMPILER: lualatex
+
+# #+LATEX_HEADER: \usepackage[margin=48bp,paperwidth=7in,paperheight=10in]{geometry}
+#+LATEX_HEADER: \AtBeginDocument{\renewcommand{\vec}{\symbf}}
+#+LATEX_HEADER: \newcommand*{\ten}{\symbfsf}
+#+LATEX_HEADER: \newcommand*{\pd}{\partial}
+#+LATEX_HEADER: \newcommand*{\grad}{\vec\nabla}
+#+LATEX_HEADER: \newcommand*\dd{\mathop{}\!\mathrm{d}}
+#+LATEX_HEADER: \newcommand*\Reals{\symbb R}
+#+LATEX_HEADER: \DeclareMathOperator{\supp}{supp}
+
+#+LATEX_HEADER: \setmainfont{STIX Two Text}
+#+LATEX_HEADER: \setmathfont{STIX Two Math}
+#+LATEX_HEADER: \setmonofont{JuliaMono}
+
+#+LATEX_HEADER: \setlength{\parindent}{0pt}
+#+LATEX_HEADER: \setlength{\parskip}{\medskipamount}
+
+# Macros for MathJAX
+#+begin_export html
+\(
+\newcommand{\pd}{\partial}
+\renewcommand{\vec}{\boldsymbol}
+\renewcommand{\ten}[1]{\boldsymbol{\mathsf{#1}}}
+\newcommand\dd{\mathop{}\!\mathrm{d}}
+\newcommand{\grad}{\vec\nabla}
+\newcommand{\symbb}{\mathbb}
+\newcommand{\Reals}{\symbb R}
+\newcommand\NRe{\mathinner{Re}}
+\DeclareMathOperator{\supp}{supp}
+\)
+#+end_export
+:END:
+
+#+PROPERTY: header-args:jupyter-julia :session julia-MultilinearForms :kernel julia :eval no-export :async yes
+
+* Machinery
+
+The bread and butter of multilinear forms are dot products and wedge products, respectively.
+
+** The standard basis
+
+See the [[file:src/vectorspaces.jl][VectorSpaces module]].
+
+Notes:
+- We need a type that represents a unit vector in the standard basis.
+- Q: should it be an ~AbstractVector~?
+- Q: necessary to make the direction a type parameter?
+
+*** Tests
+
+#+begin_src jupyter-julia :tangle test/runtests.jl
+using Test
+using MultilinearForms
+using MultilinearForms: DynamicStdUnitVector, StaticStdUnitVector
+
+using LinearAlgebra
+
+@testset "Sizes" begin
+    for es ∈ map(basis, (StdUnitVector{2}, StaticStdUnitVector{2}))
+        @test size(es[1]) == (2,)
+        @test es[1][1] && es[2][2]
+        @test !(es[1][2] || es[2][1])
+        @test_throws BoundsError es[1][3]
+    end
+end
+@testset "Dot products" begin
+    for es ∈ map(basis, (StdUnitVector{3}, StaticStdUnitVector{3}))
+        @test all(@inferred(es[i] ⋅ es[j]) == (i==j)
+                  for i ∈ eachindex(es), j ∈ eachindex(es))
+        @test begin
+            v = 1:length(es)
+            all(@inferred(v ⋅ es[i]) == v[i] && @inferred(es[i] ⋅ v) == v[i]
+                for i ∈ eachindex(es))
+        end
+        d = length(es[1])
+        @test_throws DimensionMismatch es[1] ⋅ collect(1 : d+1)
+    end
+    @test_throws DimensionMismatch StdUnitVector{2}(1) ⋅ [1,2,3]
+    @test_throws DimensionMismatch StdUnitVector{3}(2) ⋅ [1,2,3,4]
+end;
+#+end_src
+
+#+RESULTS:
+: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: Sizes         | [32m   8  [39m[36m    8[39m
+: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: Dot products  | [32m   8  [39m[36m    8[39m
+
+** Cross products and wedge products :ATTACH:
+:PROPERTIES:
+:ID:       c0b51a68-8d67-4b71-9fd6-216859b24a8b
+:END:
+
+*** Cross products
+
+We want to compute the cross product, but computing each component independently.
+The usual way is to compute them all at once as below.
+
+#+begin_src jupyter-julia
+function vec_cross!(out, u, v)
+    out[1] = u[2] * v[3] - u[3] * v[2]
+    out[2] = u[3] * v[1] - u[1] * v[3]
+    out[3] = u[1] * v[2] - u[2] * v[1]
+    return out
+end
+
+@testset "vec_cross!" begin
+    ê = basis(DUV{3})
+    u = rand(Float64, 3)
+    v = rand(Float64, 3)
+    @test u×v == vec_cross!(Array{Float64}(undef, 3), u, v)
+end;
+#+end_src
+
+Here is an implementation that only computes one component at a time.
+The trick is to use =Tuples= of =Int=​s to map the desired component to the components of the arguments.
+
+#+begin_src jupyter-julia
+function starwedge(::Val{2}, i::Int, u::AbstractVector)
+    # TODO hoist checks into a separate function
+    length(u) == length(v) == 2 || throw(DimensionMismatch("u and v must be two-dimensional vectors."))
+    @boundscheck i ≤ 2 || throw(BoundsError("No $i-th component of a two-dimensional wedge product."))
+    # ⋆dx = dy
+    # ⋆dy = -dx
+    hodgestarmap = (2, -1)
+    # hodgestarmap_unsigned = (2, 1)
+    i = hodgestarmap[direction(ê)]
+    return copysign(u[abs(i)], i)
+end
+
+@inline starwedge(::Val{2}, ê::DUV{2}, u::AbstractVector) =
+    @inbounds starwedge(Val{2}, direction(ê), u)
+@inline starwedge(ê::DUV{2}, u::AbstractVector) = starwedge(Val{2}, ê, u)
+
+@inline function starwedge(::Val{3}, i::Int, u::AbstractVector, v::AbstractVector)
+    # TODO hoist checks into a separate function
+    length(u) == length(v) == 3 || throw(DimensionMismatch("u and v must be three-dimensional vectors."))
+    @boundscheck i ≤ 3 || throw(BoundsError("No $i-th of a three-dimensional wedge product."))
+    # ⋆dx = dy ∧ dz
+    # ⋆dy = dz ∧ dx = -dx ∧ dz
+    # ⋆dz = dx ∧ dy
+    hodgestarmap = ((2,3), (3,1), (1,2))
+    hodgedual = hodgestarmap[i]
+    cofactor2x2(hodgedual, u, v)
+end
+
+@inline starwedge(::Val{3}, ê::DUV{3}, u::AbstractVector, v::AbstractVector) =
+    @inbounds starwedge(Val(3), direction(ê), u, v)
+
+@inline starwedge(ê::DUV{3}, u::AbstractVector, v::AbstractVector) = starwedge(Val(3), ê, u, v)
+
+# Untested idea:
+starwedge(::Val{3}, u::AbstractVector, v::AbstractVector, w::AbstractVector) =
+    u ⋅ [starwedge(Val(3), i, v, w) for i ∈ 1:3]
+
+"""Compute a 2x2 cofactor for submatrix [1 u v][[i,j], [i,j]]"""
+@inline cofactor2x2((i, j)::NTuple{2,Int}, u, v) = u[i] * v[j] - u[j] * v[i]
+
+@testset "starwedge" begin
+    ê = basis(DUV{3})
+    u = rand(3)
+    v = rand(3)
+    @test ê[1] == [starwedge(ê[i], ê[2], ê[3]) for i ∈ 1:3]
+    @test u×v == [starwedge(ê[i], u, v) for i ∈ 1:3]
+    @test_throws DimensionMismatch starwedge(ê[1], rand(3), rand(2))
+    @test_throws BoundsError starwedge(Val(3), 4, u, v)
+end;
+#+end_src
+
+#+RESULTS:
+: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: starwedge     | [32m   4  [39m[36m    4[39m
+Check that we are allocation-free
+
+#+begin_src jupyter-julia
+using BenchmarkTools
+
+println("Single component evaluation")
+let ê = basis(DUV{3}), u=rand(3), v=rand(3)
+    print("  cofactor2x2:")
+    ans1 = @btime cofactor2x2($(Ref((1, 2)))[], u, v) setup=(u=$u; v=$v)
+    print("  starwedge")
+    ans2 = @btime (starwedge($(Ref(ê[3]))[], $u, $v)) setup=(u=$u; v=$v)
+    @assert ans1 == ans2
+end
+#+end_src
+
+#+RESULTS:
+: Single component evaluation
+:   cofactor2x2:  3.282 ns (0 allocations: 0 bytes)
+:   starwedge  3.702 ns (0 allocations: 0 bytes)
+
+Check to see if we suffer a performance penalty over the standard "all at once" way of computing the cross product.
+
+#+begin_src jupyter-julia
+let
+    u = rand(Float64, 3)
+    v = rand(Float64, 3)
+    buf = Array{Float64}(undef, 3)
+    ê = basis(DUV{3})
+
+    # For comparison, see time to allocate a 3-element Vector
+    print("**Vector allocation**")
+    @btime Array{Float64}(undef, 3)
+
+    # This standard library function will allocate
+    print("LinearAlgebra.cross:")
+    ans1 = @btime (out[:] = LinearAlgebra.cross($u, $v)) setup=(out=$buf)
+
+    # Here is our version that does not allocate
+    print("vec_cross!:")
+    ans2 = @btime vec_cross!($buf, $u, $v)
+
+    # Here's our "lazy", component-by-component implementation
+    print("starwedge")
+    ans3 = @btime(
+        begin
+            for i ∈ 1:3
+                out[i] = starwedge(Val(3), i, u, v)
+            end
+            out
+        end,
+        setup=(u = $u; v = $v; out = $buf)
+    )
+    print("starwedge + unit vectors:")
+    @btime(
+        begin
+            for i ∈ eachindex(ê)
+                out[i] = starwedge(ê[i], u, v)
+            end
+            out
+        end,
+        setup=(u = $u; v = $v; out = $buf; ê = $ê)
+    )
+    print("starwedge + array comprehension")
+    ans4 = @btime [starwedge(ê[i], $u, $v) for i ∈ eachindex(ê)] setup=(ê = $ê)
+    @test ans1 == ans2 == ans3 == ans4
+end
+#+end_src
+
+We are on par with ~LinearAlgebra.cross~, which is excellent.
+
+**** TODO [#C] Eliminate penalty associated with unit vectors
+Interestingly, no penalty if we "index" with integers.
+There is a small penalty for using the UnitVector abstraction though.
+Perhaps the compiler does not conclude ~ê[i] == i~ in the loop.
+
+*** Wedge products
+
+Consider the \(n\) vectors \(\vec v_1 ⋯ \vec v_n\). Given an orthonormal basis \(e_1 ⋯ e_n\), the wedge product can be defined as
+\begin{equation*}
+  v_1 ∧  ⋯ ∧ v_n = ϵ_{i_1 ⋯ i_m, j_i ⋯ j_n} {(v_1)}_{j_1} ⋯ {(v_n)}_{j_n} (e_i ⊗ ⋯ ⊗ e_{i_m})
+\end{equation*}
+There is also the Hodge star operator,
+\begin{equation*}
+*(e_1 ∧ e_2 ∧ ... ∧ e_k)= e_{k+1} ∧ e_{k+2} ∧ ... ∧ e_n
+\end{equation*}
+\begin{equation*}
+    *\eta_{a_1,a_2,\ldots,a_k}=\frac{1}{k!}\epsilon_{a_1,\ldots,a_n} \eta^{a_{k+1},\ldots,a_n}
+\end{equation*}
+where \(ε\) is the permutation tensor.
+https://academickids.com/encyclopedia/index.php/Hodge_dual (simple enough for me to understand)
+We are only concerned with two- or three-dimensional vectors.
+We can do things out by hand---tedious and error-prone, but not too much so.
+
+#+begin_src jupyter-julia :results silent
+function wedge end
+
+const levicivita2 = [ 0,  1;
+                     -1, 0 ]
+
+wedge(::SUV{2,1}, ::SUV{2,2}) = 1
+wedge(::SUV{2,2}, ::SUV{2,1}) = -1
+wedge(::SUV{2,1}, b) =  b[2]
+wedge(::SUV{2,2}, b) = -b[1]  # XXX: creates odd type effects when b::AbstractVector{Bool}
+# wedge(a, b) = -wedge(b, a)
+function wedge(a, b)
+    (ê1, ê2) = basis(SUV{2})
+    a[1] * wedge(ê1, b) + a[2] * wedge(ê2, b)
+end
+
+# êᵢ ∧ êⱼ ∧ c = Ω₁₂ = [ 0     c[3] -c[2]
+#                      -c[3]     0  c[1]
+#                       c[2] -c[1]    0 ]
+wedge(::SUV{3,1}, ::SUV{3,1}, c) = 0
+wedge(::SUV{3,1}, ::SUV{3,2}, c) = c[3]
+wedge(::SUV{3,1}, ::SUV{3,3}, c) = -c[2]
+wedge(::SUV{3,2}, ::SUV{3,1}, c) = -c[3]
+wedge(::SUV{3,2}, ::SUV{3,2}, c) = 0
+wedge(::SUV{3,2}, ::SUV{3,3}, c) = c[1]
+wedge(::SUV{3,3}, ::SUV{3,1}, c) = c[2]
+wedge(::SUV{3,3}, ::SUV{3,2}, c) = -c[1]
+wedge(::SUV{3,3}, ::SUV{3,3}, c) = 0
+
+# êᵢ ∧ b ∧ c = Lᵢ = [ b[2] * c[3] - b[3] * c[2]
+#                    -b[1] * c[3] + b[3] * c[1]
+#                     b[1] * c[2] - b[2] * c[1] ]
+wedge(::SUV{3,1}, b, c) =  b[2] * c[3] - b[3] * c[2]
+wedge(::SUV{3,2}, b, c) = -b[1] * c[3] + b[3] * c[1]
+wedge(::SUV{3,3}, b, c) =  b[1] * c[2] - b[2] * c[1]
+
+function wedge(a, b, c)
+    (ê1, ê2, ê3) = basis(SUV{3})
+    return (+ a[1] * wedge(ê1, b, c)
+            + a[2] * wedge(ê2, b, c)
+            + a[3] * wedge(ê3, b, c))
+end
+#+end_src
+
+Properties:
+- Dot products vanish
+- Permuting arguments changes the sign of the result
+- Equality to cross product, determinant
+
+#+begin_src jupyter-julia
+using Test
+
+@testset "2D Wedge" begin
+    ês = basis(SUV{2})
+    @test wedge([1,1], [-1,1]) ≈ 2
+    @test wedge([-1,1], [1,1]) ≈ -2
+end
+
+@testset "3D Wedge" begin
+    ês = basis(SUV{3})
+    u = [2,3,1]; v = [1,2,4]; w = [1,2,3]
+    Ω = [     0  w[3] -w[2]
+          -w[3]     0  w[1]
+           w[2] -w[1]     0 ]
+    a = rand(3); b = rand(3); c = rand(3)
+    # equivalence to determinant
+    @test wedge(a,b,c) ≈ det([a b c])
+    # equivalence to cross product
+    @test all(wedge(ê, u, v) == (u×v)⋅ê for ê ∈ ês)
+    # antisymmetric 2nd rank tesnor from a vector
+    @test [wedge(êi, êj, w) for êi ∈ ês, êj ∈ ês] == Ω
+end;
+#+end_src
+
+
+**** TODO General formula for wedge products :ATTACH:
+
+We'd like a way to generate the formula for the determinant (or the appropriate "parts") to efficiently handle cross products or, more generally, wedge products.
+
+The following function ~permtree~ generates a "tree" of permutations of N objects for N ≤ 4.
+- There are N levels numbered (1,⋯,N)
+  - The root has N-1 children
+  - The next level has N-2 children
+  - ...
+  - The Nth level has no children
+- The branches of each node are numbered (0,⋯,N-L) and oriented
+  + (+)-orientation for even children
+  + (-)-orientation for odd children
+- Reading the objects in each node from root to a given leaf gives a permutation of the objects
+- Each of the paths from root to each leaf give each of the permutations of the objects
+- Multiplying the orientations from root to leaf gives (+1) for even permutations, (-1) for odd
+
+#+begin_src jupyter-julia :eval no
+"""Generate permutations of things"""
+permtree(arg1) = (arg1,)
+permtree(arg1, arg2) = ((arg1, permtree(arg2)),
+                        (arg2, permtree(arg1)))
+permtree(arg1, arg2, arg3) = ((arg1, permtree(arg2, arg3)),
+                              (arg2, permtree(arg1, arg3)),
+                              (arg3, permtree(arg1, arg2)))
+permtree(arg1, arg2, arg3, arg4) = ((arg1, permtree(arg2, arg3, arg4)),
+                                    (arg2, permtree(arg1, arg3, arg4)),
+                                    (arg3, permtree(arg1, arg2, arg4)),
+                                    (arg4, permtree(arg1, arg2, arg3)))
+
+permtree(1,2,3)
+#+end_src
+
+#+RESULTS:
+| 1 | ((2 (3)) (3 (2))) |
+| 2 | ((1 (3)) (3 (1))) |
+| 3 | ((1 (2)) (2 (1))) |
+
+In concept, one could use such a tree to generate formulas for the determinant of matrices or for wedge products of vectors, component by component.
+- Objects would be components of vectors (a, b, c, d) in that order as you go from root to leaf in a permutation "path"
+- Branches between nodes represent multiplication
+- Levels represent summation
+
+#+NAME: Permutation Trees
+#+CAPTION: Graphical representation of the permutation tree
+#+ATTR_ORG: :width 75%
+[[attachment:permtrees.png]]
+
+
+* Tensor functions
+
+** Rank-one irreducible tensors of the unit vector
+
+The source below defines the rank-one, irreducible Cartesian tensors in three dimensions.
+All arguments are three-dimensional vectors and the last argument ~x̂~ should be a unit vector, though we do not explicitly enforce this in the code.
+#+NAME: src:rank1-3D-irreducible-tensors
+#+begin_src jupyter-julia :results silent
+using LinearAlgebra
+using MultilinearForms
+
+using BenchmarkTools
+
+irr2_func(x̂, e1, e2) = (x̂⋅e1)*(x̂⋅e2) - (e1⋅e2)/3
+irr3_func(x̂, e1, e2, e3) = (x̂⋅e1)*(x̂⋅e2)*(x̂⋅e3) -
+    ((e1⋅e2)*(x̂⋅e3) + (e3⋅e1)*(x̂⋅e2) + (e2⋅e3)*(x̂⋅e1))/5
+
+irr2_clo(x̂) = (e1, e2) -> irr2_func(x̂, e1, e2)
+irr3_clo(x̂) = (e1, e2, e3) -> irr3_func(x̂, e1, e2, e3)
+
+irr2(x̂) = MultilinearForm{2,3}((e1, e2) -> irr2_func(x̂, e1, e2))
+irr3(x̂) = MultilinearForm{3,3}((e1, e2, e3) -> irr3_func(x̂, e1, e2, e3))
+#+end_src
+
+If we think of the vectors ~e1~, ~e2~, ~e3~ each as being one of the standard unit vectors \(\vec e_i\), then ~(x̂⋅e1)~ represents one of the components of ~x̂~.
+We can then compute components of the tensor by "scanning" ~e1~, ~e2~, ~e3~ through each of the unit vectors.
+Otherwise, we can compute contractions of the tensors with arbitrary vectors by setting one or more of the ~e*~'s to such vectors.
+For efficiency, we have defined the special unit vector type above that simply indexes another vector it is dotted with, ~e::StdUnitVector{3,1} ⋅ v = v[1]~.
+
+Note that multiplying the above functions by \(r^n\) (\(r^{-1-n}\)) gives the growing (decaying) harmonic functions in three dimensions.
+There are analogous tensors in two dimensions with different coefficients on the non-leading terms.
+
+For comparison sake, lets also define "vectorized" versions of the above that eagerly return all components of the given tensors at once.
+#+begin_src jupyter-julia :results silent
+using LinearAlgebra
+
+irr1_tens(x̂) = x̂
+irr2_tens(x̂) = (x̂ * x̂') - I/3
+const I3 = Diagonal(ones(Bool, 3))
+irr3_tens(x̂) =  # MATLAB-style approach
+    (reshape(x̂, 3,1,1) .* reshape(x̂, 1,3,1) .* reshape(x̂, 1,1,3)
+     - (reshape(I3, 1,3,3) * reshape(x̂, 3,1,1)
+        + reshape(I3, 3,1,3) * reshape(x̂, 1,3,1)
+        + reshape(I3, 3,3,1) * reshape(x̂, 1,1,3)) / 3)
+#+end_src
+Clearly, things get cumbersome if you have to work with greater than second order tensors if you restrict yourself to the =MATLAB= style.
+That last function is much easier to deal with using index notation / loops.
+#+begin_src jupyter-julia :results silent
+irr3_tens_alt(x̂) =
+    [x̂[i] * x̂[j] * x̂[k] - ((j==k)*x̂[i] + (i==k)*x̂[j] + (i==j)*x̂[k]) / 3
+     for i ∈ 1:3, j∈1:3, k∈1:3]
+#+end_src
+The above functions loose the ability to do "lazy" tensor contraction;
+the full tensor must be evaluated before contraction can occur.
+Loss of efficiency may result.
+
+#+begin_src jupyter-julia
+const ê = basis(StdUnitVector{3})
+@btime irr3_func(x, ê[1], ê[2], ê[3]) setup=(x=rand(3))
+@btime irr3_clo(x)(ê[1], ê[2], ê[3]) setup=(x=rand(3))
+@btime irr3(x)(ê[1], ê[2], ê[3]) setup=(x=rand(3))
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+:   3.422 ns (0 allocations: 0 bytes)
+:   3.772 ns (0 allocations: 0 bytes)
+:   8.530 ns (0 allocations: 0 bytes)
+: 0.07225917407687016
+:END:
+
+
+** Collecting tensor components into arrays
+
+For a given value of ~x̂~, it is often useful to "materialize" the tensor functions defined in [[src:rank1-3D-irreducible-tensors]] into vectors/matrices/arrays.
+(Recall, the ~e~ vector arguments can be used to represent components in each direction).
+We just need to loop over the standard unit vectors.
+
+We'll want to ensure this is efficient.
+
+*** Second rank tensor benchmarks
+
+#+begin_src jupyter-julia
+let x = rand(3), u = rand(3), v = rand(3)
+    ê = basis(StdUnitVector{3})
+
+    buf3 = Array{Float64}(undef, 3)
+    buf33 = Array{Float64}(undef, 3,3)
+
+    # --------------------------------------------------------------------------
+    println("Tensor Construction")
+    # print("    Strict:")
+    # @btime irr2_tens($x)
+    print("    Closure + MultilinearForm:")
+    @btime for j ∈ eachindex($ê), i ∈ eachindex($ê)
+        $buf33[i,j] = irr2($x)($ê[i], $ê[j])
+    end
+    print("    Closure + Function:")
+    @btime for j ∈ eachindex($ê), i ∈ eachindex($ê)
+        $buf33[i,j] = irr2_clo($x)($ê[i], $ê[j])
+    end
+    print("    Bare Function:")
+    @btime for j ∈ eachindex($ê), i ∈ eachindex($ê)
+        $buf33[i,j] = irr2_bare($x, $ê[i], $ê[j])
+    end
+    # --------------------------------------------------------------------------
+
+    println("  Tensor Contraction")
+    # print("    Strict:")
+    # @btime irr2_tens($x) * $u
+    print("    Closure + MultilinearForm:")
+    @btime for i ∈ eachindex($ê)
+        $buf3[i] = irr2($x)($ê[i], $u)
+    end
+    print("    Closure + Function:")
+    @btime for i ∈ eachindex($ê)
+        $buf3[i] = irr2_clo($x)($ê[i], $u)
+    end
+    print("    Bare Function:")
+    @btime for i ∈ eachindex($ê)
+        $buf3[i] = irr2_bare($x, $ê[i], $u)
+    end
+
+    println("  Two-fold Contraction")
+    # print("    Strict:")
+    # @btime $u ⋅ (irr2_tens($x) * $v)
+    print("    Closure + MultilinearForm:")
+    @btime irr2($x)($v, $u)
+    print("    Closure + Function")
+    @btime irr2_clo($x)($v, $u)
+    print("    Bare Function:")
+    @btime irr2_bare($x, $v, $u)
+end;
+#+end_src
+
+#+RESULTS:
+#+begin_example
+Tensor Construction
+    Closure + MultilinearForm:  36.470 ns (0 allocations: 0 bytes)
+    Closure + Function:  10.067 ns (0 allocations: 0 bytes)
+    Bare Function:  9.509 ns (0 allocations: 0 bytes)
+  Tensor Contraction
+    Closure + MultilinearForm:  40.805 ns (0 allocations: 0 bytes)
+    Closure + Function:  31.688 ns (0 allocations: 0 bytes)
+    Bare Function:  31.618 ns (0 allocations: 0 bytes)
+  Two-fold Contraction
+    Closure + MultilinearForm:  30.142 ns (0 allocations: 0 bytes)
+    Closure + Function  25.550 ns (0 allocations: 0 bytes)
+    Bare Function:  25.830 ns (0 allocations: 0 bytes)
+#+end_example
+*** Third rank tensor benchmarks
+
+#+begin_src jupyter-julia
+
+let x = rand(3), u = rand(3), v = rand(3), w = rand(3)
+    ê = basis(StdUnitVector{3})
+
+    buf3 = Array{Float64}(undef, 3)
+    buf33 = Array{Float64}(undef, 3,3)
+    buf333 = Array{Float64}(undef, 3,3,3)
+
+    println("Tensor construction")
+    # print("    Strict:")
+    # irr3_tens(x)
+    print("    Lazy:  ")
+    @btime for k ∈ eachindex($ê), j ∈ eachindex($ê), i ∈ eachindex($ê)
+        $buf333[i,j,k] = $(irr3(x))($ê[i], $ê[j], $ê[k])
+    end
+
+    println("Tensor contraction")
+    # print("    Strict:")
+    # @btime irr3_tens($x) * $u
+    print("    Lazy:  ")
+    @btime(
+        for j ∈ eachindex(ê), i ∈ eachindex(ê)
+            $buf33[i,j] = $(irr3(x))(ê[i], ê[j], $v)
+        end,
+        setup=(ê=$ê)
+    )
+
+    println("Two-fold contraction")
+    # print("    Strict:")
+    # @btime $u ⋅ (irr2_tens($x) * $v)
+    print("    Lazy:  ")
+    @btime for i ∈ eachindex($ê)
+        $buf3[i] = $(irr3(x))($ê[i], $v, $w)
+    end
+
+    println("Three-fold contraction")
+    @btime $(irr3(x))($u, $v, $w)
+end;
+#+end_src
+
+*** Scratch
+
+#+begin_src jupyter-julia
+Colon <: MultilinearForms.FormArg
+
+# let e = basis(StdUnitVector{3})
+#     x = rand(3)
+#     irr2 = MultilinearForm{2}(_irr2)
+#     irr2(:, e[1], x) == [irr2(e[i], e[2]) for e[i] ∈ eachindex(e)]
+# end
+#+end_src
+
+** TODO A type for tensor functions
+
+Wrap tensor functions like those above to give them a concrete size, express symmetries, etc.
+
+#+begin_src jupyter-julia
+struct MultilinearFunction{Sz, F<:Function}
+    f::F
+end
+
+MultilinearFunction{Sz}(f) where Sz = MultilinearFunction{Sz, typeof(f)}(f)
+
+@generated function (mf::MultilinearFunction{Sz})(vs::NTuple{N, <:AbstractVector}, args...) where {Sz,N}
+    N == length(Sz) || error("Wrong number")
+    return :(mf.f(vs..., args...))
+end
+
+irr2mlf = MultilinearFunction{(3,3)}(irr2)
+
+u = rand(3)
+v = rand(3)
+x = rand(3)
+irr2mlf((u,v), x)
+#+end_src
+
+*** TODO Collecting Tensors
+
+The functions above represent tensors, and we will often want to evaluate their components.
+One can just loop over the unit vectors.
+
+*** TODO Symmetric tensors
+Could compute only for \(j ≥ i\).
+
+** Stokes multipoles
+
+The following functions compute components of the first few Stokes multipoles.
+
+#+begin_src jupyter-julia :results silent
+
+@inline function magdir(x)
+    r = norm(x)
+    (r, x/r)
+end
+
+# Computes the components of the Oseen tensor
+function oseen((e1, e2), (r, x̂))
+    # r, x̂ = magdir(x)
+    ((e1⋅e2) + (e1⋅x̂)*(e2⋅x̂)) / r
+end
+
+# Eagarly computes the entire Oseen tensor at a point
+function oseen_tens(x)
+    r, x̂ = magdir(x)
+    (I + x̂ * x̂') / r
+end
+
+#
+function oseen_vec(f, x)
+    r, x̂ = magdir(x)
+    (f + x̂ * (x̂⋅f)) / r
+end
+
+"""
+    stokeslet((e1, e2), x)
+
+Flow in direction `e1` due to force monopole of strength `e2` at position `x`.
+`e1` should be a unit vector.
+"""
+function stokeslet((e1, e2), x)
+    r, x̂ = magdir(x)
+    ((e1⋅e2) + (e1⋅x̂)*(e2⋅x̂)) / (8π*r)
+end
+
+"""General force dipole."""
+function stokeslet_dipole((e1, e2, e3), x)
+    r, x̂ = magdir(x)
+    return (3(e1⋅x̂)*(e2⋅x̂)*(e3⋅x̂) - (e2⋅e3)*(e1⋅x̂)          # stresslet part
+            + (e1⋅e2)*(e3⋅x̂) - (e1⋅e3)*(e2⋅x̂) ) / (8π*r^2)  # rotlet part
+end
+
+"""Symmetric part of the Stokeslet dipole."""
+function stresslet((e1, e2, e3), x)
+    r, x̂ = magdir(x)
+    (3(e1⋅x̂)*(e2⋅x̂)*(e3⋅x̂) - (e2⋅e3)*(e1⋅x̂)) / (8π*r^2)
+end
+
+"""Antisymmetric part of the Stokeslet dipole."""
+function rotlet((e1,e2), x)
+    # vᵢ = εᵢⱼₖ Lⱼ xₖ = (L × x)ᵢ
+    r, x̂ = magdir(x)
+    wedge(e1, e2, x̂) / (4π*r^2)
+end
+
+"""Point source of fluid with unit strength."""
+function sourcelet((e1,), x)
+    r, x̂ = magdir(x)
+    return (e1⋅x̂) / (4π*r^2)
+end
+
+"""Source-sink doublet.
+
+Also known as a "potential dipole" or "degenerate quadrupole".
+Equal to u_SD = -∇²G = -(∇²/8π)J, where J is the Oseen tensor."""
+function sourcelet_dipole((e1, e2), x)
+    r, x̂ = magdir(x)
+    return (3(e1⋅x̂)*(e2⋅x̂) - (e1⋅e2)) / (4π*r^3)
+end
+#+end_src
+
+** A type for direction cosine vectors
+:PROPERTIES:
+:header-args:jupyter-julia: :eval no
+:END:
+
+Something like this might be useful for representing a vector \(\vec v\) as \((|\vec v|, \hat{\vec v})\) where \(\hat{\vec v} = \vec v / |\vec v|\).
+#+begin_src jupyter-julia
+"""Vector representation using a magnitude and direction cosines."""
+struct CosVector{VT<:AbstractVector{<:AbstractFloat}}
+    magnitude::eltype(VT)
+    direction_cosines::VT
+    function CosVector{VT}(v::T, α::VT) where {T<:AbstractFloat,
+                                               VT<:AbstractVector{T}}
+        @assert norm(α) == 1.0
+        new(v, α)
+    end
+end
+
+@inline function magdir(x)
+    r = norm(x)
+    (r, x/r)
+end
+#+end_src
+
+
+* Symbolics
+
+Use =SymbolicUtils.jl= to differentiate symbolic tensors or multilinear forms.
+A "tensor" is an object that is invariant under change of coordinate system.
+For Cartesian tensors, change of coordinate system is limited rotations of the basis vectors of global Euclidean space.
+
+Let \(\vec x\) be the independent variable (position vector) so \(\vec a ⋅ \nabla = a_i (∂/∂x_i) \).
+Focus on expressions that represent scalars because tensors can be built from scalar expressions for each component.
+
+- Gradient of independent variable \(\vec x\)
+  \( (\vec a ⋅ \nabla) (\vec x ⋅ \vec b) = \vec a ⋅ \vec b \)
+
+- Squared Euclidean norm
+  \( (\vec a ⋅ ∇)(\vec x ⋅ \vec x) = 2 (\vec a ⋅ \vec x) \)
+
+- Product rule
+  \[ (\vec a ⋅ ∇)(fg) =  (\vec a ⋅ ∇)(f)\,g + f\,(\vec a ⋅ ∇)(g)\]
+
+- Chain rule
+  \[ (\vec a ⋅ ∇)f(g(x)) = f'(g(\vec x)) (\vec a ⋅ ∇)g(\vec x) \]
+  + Example 1: Euclidean norm
+    \[ (\vec a ⋅ ∇)(\sqrt{\vec x ⋅ \vec x}) = (2 \vec a ⋅ \vec x)/(2 \sqrt{\vec x ⋅ \vec x}) = (\vec a ⋅ \vec x) / |\vec x| \]
+  + Example 2:
+    \[ (\vec e ⋅ ∇) \sinh(\vec x ⋅ \vec a) = (\vec e ⋅ \vec a) \cosh(\vec x ⋅ \vec a)  \]
+
+- Change of coordinates from \(\vec ξ\) to \(\vec x\)
+  \[
+    (\vec a ⋅ ∇)[f(\vec ξ(\vec x))] =
+    ∑_j (\vec e_j ⋅ ∇f)|_{\vec ξ(\vec x)} (\vec a ⋅ ∇) (\vec ξ ⋅ \vec e_j)
+  \]
+  - Example: reflection through plane.
+    Let \(\vec ξ = x^* = (\ten I - 2 \vec n \vec n) ⋅ \vec x\).
+    Then, \( \vec a ⋅ \vec x^* = \vec a ⋅ (\ten I - 2 \vec n \vec n ) ⋅ \vec x
+    = \vec a ⋅ \vec x - 2 \cdot (\vec n ⋅ \vec a) (\vec n ⋅ \vec x) \).
+    Note: we get a nice "optimization" over naive tensor contraction / matrix multiplication when thinking of scalar components of a vector.
+
+- Determinants?
+- Symmetries
