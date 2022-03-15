@@ -43,8 +43,12 @@
 :JULIA_SETUP:
 #+begin_src jupyter-julia :results silent :exports none
 using LinearAlgebra
+using Static
+using ArrayInterface
 using StaticArrays
-using MultilinearForms
+using StaticArrays: sacollect
+using MultilinearMaps
+import MultilinearMaps as MM
 
 using BenchmarkTools, Profile, Test
 
@@ -53,24 +57,30 @@ showit(x) = (show(stdout, "text/plain", x); println())
 :END:
 
 
-#+TITLE: Multilinear Forms: Implementation Notes
+#+TITLE: ~MultilinearMaps~
 
 
 * Introduction
 
-[[https://en.wikipedia.org/wiki/Multilinear_form][Multilinear forms]] map \(K\) \(D\)-dimensional vectors to a scalar quantity.
-A familiar example of a multilinear form is the standard inner product (dot product) of vectors, which is a bilinear form (also called a 2-linear form or a 2nd order multilinear form).
-It takes two vectors and produces a scalar.
-A \(K\)th order multilinear form \(f\) can be represented in terms of scalar components \(A_{i_1 ⋯ i_K}\) as
+Multilinear maps (see [[wikipedia:Multilinear_map][Wikipedia]] and [[https://www.isical.ac.in/~arnabc/q/tensor.html][this page]]) are functions of \(K\) vectors (potentially belonging to difference vector spaces) and map them to vectors in an "output" vector space \(W\).
+Thus, a multilinear map is a function
 \begin{equation*}
-f(v_1, ⋯, v_K) = A_{i_1 ⋯ i_K} v_{1 i_1} ⋯ v_{K i_K}
+f : V_1 ⋯ V_K → W
 \end{equation*}
-and therefore are often encoded as multidimensional arrays.
-The components can be extracted by setting each of the vectors \(\vec v_k\) to each of the unit vectors \(\uvec e_j\)
+If the codomain of \(f\) is a field of scalars, then we call \(f\) a [[wikipedia:Multilinear_form][multilinear form]].
+If \(M\) of the \(V_1, ⋯, V_K\) are a vector space \(V\) and the remaining \(N\) are the dual space of \(V\), \(V^*\), then \(f\) is called a \((M,N)\)-tensor.
+A familiar example of a multilinear map (a multilinear form in this case) is the standard inner product (dot product) of vectors, which is a bilinear form (also called a 2-linear form or a 2nd order multilinear form).
+It takes two vectors and produces a scalar.
+
+The most general form of a multilinear map is
+\begin{equation*}
+  f(v_1, ⋯, v_K) = \sum_{i_1}^{D_1} ⋯ \sum_{i_K}^{D_K} \vec A_{i_1 ⋯ i_K} v_{1 i_1} ⋯ v_{K i_K}
+\end{equation*}
+where \(D_j\) gives the dimension of the vector space to which \(\vec v_j\) belongs.
+Thus, \(f\) can be represented by an \(K\)-dimensional array of components.
 For example, for the inner product form, \(\uvec e_i ⋅ \uvec e_j \) corresponds to the Kronecker delta \(δ_{ij}\).
-However, representing multilinear forms as functions on vectors is also useful and can be more computationally efficient, especially if the tensor \(A\) has some special structure.
+However, representing multilinear maps as ~function~​s on vectors in computational code is useful, especially if \(f\) has special structure.
 (For instance, computing an inner product by naively multiplying by the identity matrix by \(v_1\) on the left and \(v_2\) on the right is not very efficient.)
-Like general tensors, multilinear forms are invariant under a change of coordinates.
 
 Here is another example of a 4-linear form, which takes four vectors and produces a scalar
 #+begin_src jupyter-julia :results silent :tangle examples.jl
@@ -100,12 +110,6 @@ We can loop over functions like these to fill up an array of tensor components.
 
 
 #+begin_src jupyter-julia
-using MultilinearForms: fillfn!, fillfn_cartesianindices!
-
-using BenchmarkTools
-using StaticArrays
-using StaticArrays: sacollect
-
 let # SDims = NTuple{4,3}
     # dims = fieldtypes(SDims)
     # ixfn = skew_ixfn
@@ -113,12 +117,12 @@ let # SDims = NTuple{4,3}
 
     println("  Iteration over `CartesianIndices`")
     out1 = @btime(
-        fillfn_cartesianindices!(A, $skew_ixfn),
+        MM.fillfn_cartesianindices!(A, $skew_ixfn),
         setup=(A = MArray{NTuple{4,3},Int}(undef))
     )
     println("  Using `Base.Cartesian`")
     out2 = @btime(
-        fillfn!(A, $skew_ixfn),
+        MM.fillfn!(A, $skew_ixfn),
         setup=(A = MArray{NTuple{4,3},Int}(undef))
     )
     println("`SArray` via `sacollect`")
@@ -131,63 +135,6 @@ let # SDims = NTuple{4,3}
     out3
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   Iteration over `CartesianIndices`
-:   88.190 ns (0 allocations: 0 bytes)
-:   Using `Base.Cartesian`
-:   14.346 ns (0 allocations: 0 bytes)
-: `SArray` via `sacollect`
-:   11.127 ns (0 allocations: 0 bytes)
-#+begin_example
-3×3×3×3 SArray{NTuple{4, 3}, Int64, 4, 81} with indices SOneTo(3)×SOneTo(3)×SOneTo(3)×SOneTo(3):
-[:, :, 1, 1] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 2, 1] =
- 0  -1  0
- 1   0  0
- 0   0  0
-
-[:, :, 3, 1] =
- 0  0  -1
- 0  0   0
- 1  0   0
-
-[:, :, 1, 2] =
-  0  1  0
- -1  0  0
-  0  0  0
-
-[:, :, 2, 2] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 3, 2] =
- 0  0   0
- 0  0  -1
- 0  1   0
-
-[:, :, 1, 3] =
-  0  0  1
-  0  0  0
- -1  0  0
-
-[:, :, 2, 3] =
- 0   0  0
- 0   0  1
- 0  -1  0
-
-[:, :, 3, 3] =
- 0  0  0
- 0  0  0
- 0  0  0
-#+end_example
-:END:
 
 Use of ~sacollect~ is most efficient because it effectively unrolls all the loops.
 However, using approaches with looping might be beneficial in cases where loop unrolling would create too much work for the compiler.
@@ -209,16 +156,10 @@ For example, the dot product between two unit vectors, ~[1, 0, 0]~ and ~[0, 0, 1
 
 Below, we construct a \(3×3\) identity matrix using ~StdUnitVector~​s.
 #+begin_src jupyter-julia
-let e = basis(StdUnitVector{3})
+let e = standardbasis(3)
     [e[i] ⋅ e[j] for j ∈ eachindex(e), i ∈ eachindex(e)]
 end
 #+end_src
-
-#+RESULTS:
-: 3×3 Matrix{Bool}:
-:  1  0  0
-:  0  1  0
-:  0  0  1
 
 Note that the matrix elements are of type ~Bool~ values is created ~StdUnitVector~.
 This is a direct result of the boolean tests performed for each element of the matrix.
@@ -266,10 +207,6 @@ using Test
 end;
 #+end_src
 
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
-: Unit Vectors  | [32m  23  [39m[36m   23[39m
-
 ** Performance
 
 When creating a unit vector, one generally wants to validate that its direction is appropriate for the vector space, i.e., ~1 ≤ d ≤ D~.
@@ -278,76 +215,31 @@ Indeed, constructing a two-dimensional unit vector pointing into the third dimen
 StdUnitVector{2}(3)
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-# [goto error]
-#+begin_example
-DomainError with 3:
-No vector in 3th dimension of a basis spanning ℝ^2
-
-Stacktrace:
- [1] _throw_dims_error(D::Int64, d::Int64)
-   @ MultilinearForms ~/Development/julia/MultilinearForms/src/stdbasis.jl:41
- [2] StdUnitVector
-   @ ~/Development/julia/MultilinearForms/src/stdbasis.jl:27 [inlined]
- [3] StdUnitVector{2}(d::Int64)
-   @ MultilinearForms ~/Development/julia/MultilinearForms/src/stdbasis.jl:31
- [4] top-level scope
-   @ In[11]:1
- [5] eval
-   @ ./boot.jl:373 [inlined]
- [6] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-   @ Base ./loading.jl:1196
-#+end_example
-:END:
-
 Like bounds checking of array access, this comes with some overhead.
 However, we may want to elide such checks if we are confident that the unit vectors we construct are valid.
 Therefore, we provide "unsafe construction" of unit vectors to elide the dimensionality check.
 (Warning: doing so could lead to strange  difficult-to-debug behavior.)
 #+begin_src jupyter-julia
-StdUnitVector{2}(UNSAFE, 3)
+StdUnitVector{2}(MM.UNSAFE, 3)
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-# [goto error]
-: UndefVarError: UNSAFE not defined
-:
-: Stacktrace:
-:  [1] top-level scope
-:    @ In[12]:1
-:  [2] eval
-:    @ ./boot.jl:373 [inlined]
-:  [3] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-:    @ Base ./loading.jl:1196
-:END:
 
 We can check for any overhead of the ~UNSAFE~ method to direct computation on the indices, and there seems to be none.
 #+begin_src jupyter-julia :results scalar
-using MultilinearForms: Safety, SAFE, UNSAFE
+using MultilinearMaps: Safety, SAFE, UNSAFE
 
 @inline inds2uvecs(safety::S, inds::Vararg{Int}) where {S<:Safety} = map(i -> StdUnitVector{3}(safety, i), inds)
 @inline inds2uvecs(safety::S) where {S<:Safety} = (inds...) -> inds2uvecs(safety, inds...)
 # @inline inds2uvecs(I::CartesianIndex) = map(StdUnitVector{3}, Tuple(I))
 println("Function of indices")
-out_ixfn = @btime fillfn!(A, skew_ixfn) setup=(A = MArray{NTuple{4,3},Int64}(undef))
+out_ixfn = @btime MM.fillfn!(A, skew_ixfn) setup=(A = MArray{NTuple{4,3},Int64}(undef))
 println("SAFE unit vectors (validity checked)")
-out_safe = @btime(fillfn!(A, _skew ∘ inds2uvecs(SAFE)),
+out_safe = @btime(MM.fillfn!(A, _skew ∘ inds2uvecs(SAFE)),
                   setup=(A = MArray{NTuple{4,3},Int64}(undef)))
 println("UNSAFE unit vectors (no validity check)")
-out_unsafe = @btime(fillfn!(A, _skew ∘ inds2uvecs(UNSAFE)),
+out_unsafe = @btime(MM.fillfn!(A, _skew ∘ inds2uvecs(UNSAFE)),
                     setup=(A = MArray{NTuple{4,3},Int64}(undef)))
 @assert out_ixfn == out_safe == out_unsafe
 #+end_src
-
-#+RESULTS:
-: Function of indices
-:   14.136 ns (0 allocations: 0 bytes)
-: SAFE unit vectors (validity checked)
-:   47.667 ns (0 allocations: 0 bytes)
-: UNSAFE unit vectors (no validity check)
-:   14.277 ns (0 allocations: 0 bytes)
 
 Interestingly, completely explicit loops are little faster, but why?
 
@@ -363,48 +255,15 @@ Interestingly, completely explicit loops are little faster, but why?
 );
 #+end_src
 
-#+RESULTS:
-:   13.225 ns (0 allocations: 0 bytes)
 
+* Multilinear maps
 
-* Multilinear forms
-
-In [[file:src/MultilinearForms.jl][MultilinearForms.jl]], we define a callable type ~MultilinearForm~ whose instances represent multilinear forms.
-A ~MultilinearForm~ is constructed by passing an "implementation" function like ~(⋅)~ or ~_skew~.
-We'll restrict our attention to the case where the vectors operated on by a given ~MultilinearForm~ are of known spatial dimension (~length~), usually being between 1--4 and most commonly 2 or 3.
+In [[file:src/MultilinearMaps.jl][MultilinearMaps.jl]], we define a callable type ~MultilinearMap~ whose instances represent multilinear forms.
+A ~MultilinearMap~ is constructed by passing an "implementation" function like ~LinearAlgebra.dot~ or ~_skew~.
+We'll restrict our attention to the case where the vectors operated on by a given ~MultilinearMap~ are of known spatial dimension (~length~), usually being between 1--4 and most commonly 2 or 3.
 Thus, we represent such vectors using types from ~StaticArrays~ for efficiency.
 
-Check that things work efficiently (no allocations, e.g.).
-
-#+begin_src jupyter-julia :results scalar
-using BenchmarkTools
-using Test
-
-let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
-    inner = MultilinearForm{2,3}(dot)
-    skew = MultilinearForm{4,3}(_skew)
-    println("Contraction, form of order $(order(inner)) in $(dimension(inner)) dimensions")
-    @assert 1 == @btime($inner($(u,u)))
-    println("Contraction, form of order $(order(skew)) in $(dimension(skew)) dimensions")
-    @assert 1 == @btime($skew($(u,v,u,v)))
-end
-#+end_src
-
-#+RESULTS:
-: Contraction, form of order 2 in 3 dimensions
-:   1.396 ns (0 allocations: 0 bytes)
-: Contraction, form of order 4 in 3 dimensions
-:   3.841 ns (0 allocations: 0 bytes)
-
-We can think of a ~MultilinearForm~ applied to only ~N~ of its ~K~ arguments as a similar multilinear form of order ~K-N~.
-We call such a multilinear form "contracted", which is implemented by ~ContractedMultilinearForm~.
-We also use the ~Colon~ (~:~) to indicate a "free index" of the tensor / form.
-When a ~MultilinearForm~ is ~collect~​ed into an array, the ~:~ indicates slots/indices which should be looped over for all the unit vectors to generate numerical components.
-
-We might want more functionality in the future, like the ability to permute the argument order of the vector arguments.
-We leave that to later work.
-
-Let's define a few ~MultilinearForms~ (in three dimensions) to work on below.
+Let's define a few ~MultilinearMaps~ (in three dimensions) to work on below.
 #+begin_src jupyter-julia :results silent
 const ê = StdUnitVector  # For convenience
 _just_true() = true
@@ -413,7 +272,7 @@ const inner = MultilinearForm{2,3}(dot)
 const skew = MultilinearForm{4,3}(_skew)
 #+end_src
 
-** Tests
+Check that thing work correctly.
 
 #+begin_src jupyter-julia
 using Test
@@ -424,13 +283,50 @@ using Test
     solo = @inferred MultilinearForm{0,3}(_just_true)
     inner = @inferred MultilinearForm{2,2}(dot)
     skew = @inferred MultilinearForm{4,2}(_skew)
+    @test solo() == true
+    @test_throws MethodError solo(u)
     @test inner(u,u) == 1
     @test inner(u,v) == 0
     @test inner(v,u) == 0
+    @test_throws MethodError inner(u)
     @test skew(u,u,v,v) == 0
     @test skew(u,v,u,v) == 1
     @test skew(u,v,v,u) == -1
+end;
+#+end_src
+
+Check that things work efficiently (no allocations, e.g.).
+
+#+begin_src jupyter-julia :results scalar
+using BenchmarkTools
+using Test
+
+let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
+    inner = MultilinearMap{(3,3)}(dot)
+    skew = MultilinearForm{4,3}(_skew)
+    println("Contraction, map with argument dimensions $(size(inner))")
+    @assert 1 == @btime($inner($(u,u)...))
+    println("Contraction, map with argument dimensions $(size(skew))")
+    @assert 1 == @btime($skew($(u,v,u,v)...))
 end
+#+end_src
+
+** Contraction
+
+We can think of a ~MultilinearMap~ applied to only ~N~ of its ~K~ arguments as a similar multilinear map of order ~K-N~.
+We call such a multilinear form "contracted", which is implemented by ~ContractedMultilinearForm~.
+We also use the ~Colon~ (~:~) to indicate a "free index" of the tensor / form.
+When a ~MultilinearForm~ is ~collect~​ed into an array, the ~:~ indicates slots/indices which should be looped over for all the unit vectors to generate numerical components.
+
+#+begin_src jupyter-julia
+# MM._contracted_size(typeof(skew), typeof((ê{3}(2), :, ê{3}(1), :)))
+@btime SArray(inner(:,ê{3}(1)))
+#+end_src
+
+
+Some tests:
+
+#+begin_src jupyter-julia
 @testset "Multilinear Form -> Contracted Form" begin
     let
         u = StdUnitVector{2}(1) # SVector(1., 0.)
@@ -454,27 +350,16 @@ end
 end;
 #+end_src
 
-#+RESULTS:
-: [0m[1mTest Summary:              | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
-: Multilinear Form -> Scalar | [32m   6  [39m[36m    6[39m
-: [0m[1mTest Summary:                       | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
-: Multilinear Form -> Contracted Form | [32m   6  [39m[36m    6[39m
+We might want more functionality in the future, like the ability to permute the argument order of the vector arguments.
+We leave that to later work.
 
 
 * Interfaces for iteration, indexing, etc.
 
 We can now produce an identity matrix as follows by using ~inner~, defined above, and ~StdUnitVector~.
 #+begin_src jupyter-julia
-let e = basis(StdUnitVector{3})
-    [inner(e[i], e[j]) for j ∈ eachindex(e), i ∈ eachindex(e)]
-end
+@btime [inner(ê{3}(i), ê{3}(j)) for i ∈ 1:3, j ∈ 1:3]
 #+end_src
-
-#+RESULTS:
-: 3×3 Matrix{Bool}:
-:  1  0  0
-:  0  1  0
-:  0  0  1
 
 However, much convenience is provided by implementing the [[https://docs.julialang.org/en/v1/manual/interfaces/][iteration and indexing interfaces]] for ~MultilinearForm~​s.
 This will allow us to "collect" a ~MultilinearForm~ into an array container like ~Array~ or ~SArray~ using ~collect~ or ~StaticArrays.sacollect~, respectively.
@@ -485,59 +370,61 @@ There, we also implement methods for ~StaticArrays.similar_type~ and ~Base.simil
 
 Note that when ~@inbounds~ is used, unit vectors are unsafely constructed, without checking if their direction is valid for their dimension.
 
-** Collection
+** Indexing
+
+#+begin_src jupyter-julia :results scalar
+# MM._getindex(MM.UNSAFE, inner, 1, 1)
+@btime inner(ê{3}(1), ê{3}(1))
+@btime MM._getindex(MM.SAFE, inner, 1, 3)
+@btime inner[1,3]
+#+end_src
+
+
+** Iteration and Collection
 
 The identity matrix (~inner~) can now be collected into an array with a single line of code.
 #+begin_src jupyter-julia
-collect(inner)
+@btime collect(inner)
 #+end_src
 
-#+RESULTS:
-: 3×3 Matrix{Bool}:
-:  1  0  0
-:  0  1  0
-:  0  0  1
+:NOTE:
+~collect(::MultilinearMap)~ requires a hack to work to the effect of ~Base.collect(f::MultilinearMap) = Base.collect(eltype(f), f)~.  Without it, ~collect(inner)~ raises an error when it attempts to call ~similar~:
 
-But, since the size of each dimension is usually small and a fixed constant, we integrate with ~StaticArrays~.
+#+begin_src jupyter-julia :results scalar
+similar(Array{Bool}, axes(inner))  # works
+similar(1:1, Bool, axes(inner))    # broken
+#+end_src
+:END:
+
+Since the size of each dimension is usually small and a fixed constant, we integrate with ~StaticArrays~.
 #+begin_src jupyter-julia
-let
-    sacollect(SArray, inner) |> showit
-    sacollect(MArray, inner) |> showit
+@testset "StaticArrays traits" begin
+    @test StaticArrays.Length(inner) == StaticArrays.Length(3^2)
+    @test StaticArrays.Length(skew) == StaticArrays.Length(3^4)
+    @test StaticArrays.Size(inner) == StaticArrays.Size(3,3)
+    @test StaticArrays.Size(skew) == StaticArrays.Size(3,3,3,3)
 end;
 #+end_src
 
-#+RESULTS:
-: 3×3 SMatrix{3, 3, Bool, 9} with indices SOneTo(3)×SOneTo(3):
-:  1  0  0
-:  0  1  0
-:  0  0  1
-: 3×3 MMatrix{3, 3, Bool, 9} with indices SOneTo(3)×SOneTo(3):
-:  1  0  0
-:  0  1  0
-:  0  0  1
+
+#+begin_src jupyter-julia
+let
+    @btime sacollect(SArray, skew)
+    @btime sacollect(MArray, skew)
+end;
+#+end_src
 
 We can collect after contraction / "slicing", too.
 Let's get a slice or two of the ~skew~ tensor 🍕.
 #+begin_src jupyter-julia
-let skew_components = SArray(skew)  # Materialize the whole tensor
+@testset "More contractions" begin
+    skew_components = SArray(skew)  # Materialize the whole tensor
     # Now, slice the component array and compare it to tensor contraction
     # with the unit vectors
-    @assert SArray(skew(ê{3}(1), :, ê{3}(2), :)) == skew_components[1,:,2,:]
-    @assert SArray(skew(:, :, ê{3}(3), ê{3}(2))) == skew_components[:,:,3,2]
-    SArray(skew(ê{3}(1), :, ê{3}(2), :)) |> showit
-    SArray(skew(:, :, ê{3}(3), ê{3}(2))) |> showit
+    @test SArray(skew(ê{3}(1), :, ê{3}(2), :)) == skew_components[1,:,2,:]
+    @test SArray(skew(:, :, ê{3}(3), ê{3}(2))) == skew_components[:,:,3,2]
 end;
 #+end_src
-
-#+RESULTS:
-: 3×3 SMatrix{3, 3, Int64, 9} with indices SOneTo(3)×SOneTo(3):
-:   0  0  0
-:  -1  0  0
-:   0  0  0
-: 3×3 SMatrix{3, 3, Int64, 9} with indices SOneTo(3)×SOneTo(3):
-:  0  0   0
-:  0  0  -1
-:  0  1   0
 
 Note that components of the tensor the user has not asked for are never computed.
 
@@ -548,16 +435,17 @@ Let's make functions for dumping components into an arbitrary container.
 using Base.Cartesian
 using StaticArrays: same_size
 
-function components!(tgt::AbstractArray, mf::MultilinearForm)
-    same_size(tgt, mf)
-    _unsafe_fill_components!(tgt, mf)
+function components!(tgt::AbstractArray, f::MultilinearMap)
+    same_size(tgt, f)
+    _unsafe_fill_components!(tgt, f)
 end
 
-@generated function _unsafe_fill_components!(tgt::AbstractArray{<:Any,K}, mf::MultilinearForm{K}) where K
+@generated function _unsafe_fill_components!(tgt::AbstractArray, f::MultilinearMap)
     # @inbounds this when ready to make this not safe
+    K = ndims(f)
     quote
         @nloops $K i tgt begin
-            @inbounds (@nref $K tgt i) = (@nref $K mf i)
+            @inbounds (@nref $K tgt i) = (@nref $K f i)
         end
         tgt
     end
@@ -565,129 +453,24 @@ end
 #+end_src
 
 #+begin_src jupyter-julia
-@btime components!(A, mf) setup=begin
-    mf = MultilinearForm{4,3}(_skew)
-    A = similar(mf)
-end
+# XXX Performance regression
+@btime components!(A, skew) setup=(A = MArray{NTuple{4,3},Int64}(undef))
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   14.346 ns (0 allocations: 0 bytes)
-#+begin_example
-3×3×3×3 MArray{NTuple{4, 3}, Int64, 4, 81} with indices SOneTo(3)×SOneTo(3)×SOneTo(3)×SOneTo(3):
-[:, :, 1, 1] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 2, 1] =
- 0  -1  0
- 1   0  0
- 0   0  0
-
-[:, :, 3, 1] =
- 0  0  -1
- 0  0   0
- 1  0   0
-
-[:, :, 1, 2] =
-  0  1  0
- -1  0  0
-  0  0  0
-
-[:, :, 2, 2] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 3, 2] =
- 0  0   0
- 0  0  -1
- 0  1   0
-
-[:, :, 1, 3] =
-  0  0  1
-  0  0  0
- -1  0  0
-
-[:, :, 2, 3] =
- 0   0  0
- 0   0  1
- 0  -1  0
-
-[:, :, 3, 3] =
- 0  0  0
- 0  0  0
- 0  0  0
-#+end_example
-:END:
 
 ** Validity & Performance Checks
 
 #+begin_src jupyter-julia
-let D = 3
-    inner = MultilinearForm{2,D}(dot)
-    skew = MultilinearForm{4,D}(_skew)
-    solo = MultilinearForm{0,D}(() -> 1.0)
-    e = basis(StdUnitVector{D})
+let
+    inner = MultilinearForm{2,3}(dot)
+    skew = MultilinearForm{4,3}(_skew)
+    solo = MultilinearMap{Tuple{}}(() -> 1.0)
     @btime StaticArrays.sacollect(Scalar, $solo)
-    @btime StaticArrays.sacollect(SArray, $skew(:, :, :, :))
+    @btime StaticArrays.sacollect(SArray, $skew)
+    @btime StaticArrays.sacollect(SArray, $skew(:,:,:,:))
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   0.838 ns (0 allocations: 0 bytes)
-:   11.046 ns (0 allocations: 0 bytes)
-#+begin_example
-3×3×3×3 SArray{NTuple{4, 3}, Int64, 4, 81} with indices SOneTo(3)×SOneTo(3)×SOneTo(3)×SOneTo(3):
-[:, :, 1, 1] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 2, 1] =
- 0  -1  0
- 1   0  0
- 0   0  0
-
-[:, :, 3, 1] =
- 0  0  -1
- 0  0   0
- 1  0   0
-
-[:, :, 1, 2] =
-  0  1  0
- -1  0  0
-  0  0  0
-
-[:, :, 2, 2] =
- 0  0  0
- 0  0  0
- 0  0  0
-
-[:, :, 3, 2] =
- 0  0   0
- 0  0  -1
- 0  1   0
-
-[:, :, 1, 3] =
-  0  0  1
-  0  0  0
- -1  0  0
-
-[:, :, 2, 3] =
- 0   0  0
- 0   0  1
- 0  -1  0
-
-[:, :, 3, 3] =
- 0  0  0
- 0  0  0
- 0  0  0
-#+end_example
-:END:
+Very odd quirk: if you change ~MultilinearMap{Tuple{}}~ to ~MultilinearForm{0,3} === MultilinearMap{Tuple{}}~, the /other/ benchmarks slow down.
 
 #+begin_src jupyter-julia
 let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
@@ -698,46 +481,12 @@ let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   11.057 ns (0 allocations: 0 bytes)
-:   0.908 ns (0 allocations: 0 bytes)
-:   0.838 ns (0 allocations: 0 bytes)
-: [32m[1mTest Passed[22m[39m
-:   Expression: out1 == out2
-:    Evaluated: [0 0 0; 0 0 -1; 0 1 0] == [0 0 0; 0 0 -1; 0 1 0]
-:END:
-
 ** Known issues
 
 For some reason, type aliases of ~SArray~ like ~SMatrix~ don't work.
 #+begin_src jupyter-julia
 SMatrix(inner)  # FIXME: this makes to do but is broken.
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-# [goto error]
-#+begin_example
-MethodError: no method matching size_to_tuple(::TypeVar)
-[0mClosest candidates are:
-[0m  size_to_tuple([91m::Type{S}[39m) where S<:Tuple at ~/.julia/packages/StaticArrays/0bweZ/src/util.jl:49
-
-Stacktrace:
- [1] #s26#14
-   @ ~/.julia/packages/StaticArrays/0bweZ/src/SArray.jl:71 [inlined]
- [2] var"#s26#14"(S::Any, SA::Any, ::Any, #unused#::Any, gen::Any)
-   @ StaticArrays ./none:0
- [3] (SMatrix)(mf::MultilinearForm{2, 3, typeof(dot)})
-   @ MultilinearForms ~/Development/julia/MultilinearForms/src/MultilinearForms.jl:202
- [4] top-level scope
-   @ In[23]:1
- [5] eval
-   @ ./boot.jl:373 [inlined]
- [6] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-   @ Base ./loading.jl:1196
-#+end_example
-:END:
 
 
 * More complex (and useful) multilinear forms
@@ -747,8 +496,7 @@ Stacktrace:
 The functions below give the spherical harmonics (the traceless symmetric tensors) on \(\mathbb S^2\).
 (/Note, these are great for unit tests!/ Can also check that the results are symmetric and traceless to ensure there is no regression in computing correct results.)
 
-#+begin_src jupyter-julia :tangle test/harmonics.jl
-using MultilinearForms, LinearAlgebra
+#+begin_src jupyter-julia :results silent :tangle test/harmonics.jl
 # Functions that represent (tensor) spherical harmonics
 sphharm30(_) = MultilinearForm{0,3}(() -> true)
 sphharm31(n̂) = MultilinearForm{1,3}((v) -> n̂⋅v)
@@ -756,9 +504,6 @@ sphharm32(n̂) = MultilinearForm{2,3}((v1, v2) -> (n̂⋅v1)*(n̂⋅v2) - (v1⋅
 sphharm33(n̂) = MultilinearForm{3,3}((v1, v2, v3) ->
     (n̂⋅v1)*(n̂⋅v2)*(n̂⋅v3) - ((v1⋅v2)*(n̂⋅v3) + (v3⋅v1)*(n̂⋅v2) + (v2⋅v3)*(n̂⋅v1))/5)
 #+end_src
-
-#+RESULTS:
-: sphharm33 (generic function with 1 method)
 
 These should be traceless and symmetric when collected into an matrix/array.
 #+begin_src jupyter-julia
@@ -788,8 +533,8 @@ _issymmetric(A::AbstractArray{<:Any, 2}) =
     @testset "Traceless" begin
         for formfield in (sphharm30, sphharm31, sphharm32, sphharm33)
             form = formfield(x)
-            K = order(form)
-            D = dimension(form)
+            K = ndims(form)
+            D = ArrayInterface.size(form, 1)
             out = collect(form)
             @test ndims(out) == K
             @test all(==(D), size(out))
@@ -807,10 +552,6 @@ _issymmetric(A::AbstractArray{<:Any, 2}) =
     end
 end;
 #+end_src
-
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
-: Harmonics     | [32m  22  [39m[36m   22[39m
 
 Lets check the performance of these functions.
 #+begin_src jupyter-julia
@@ -856,29 +597,7 @@ bmarks = let
 end;
 #+end_src
 
-#+RESULTS:
-#+begin_example
-Second order form
-  all components -> 3x3 matrix
-  2.305 ns (0 allocations: 0 bytes)
-  single contraction -> length-3 vector  (matrix-vector prodct)
-  2.374 ns (0 allocations: 0 bytes)
-  double contraction -> scalar  (quadratic form)
-  3.283 ns (0 allocations: 0 bytes)
-
-Thrid order form
-  all components -> 3x3x3 array
-  12.444 ns (0 allocations: 0 bytes)
-  single contraction -> 3x3 matrix
-  21.878 ns (0 allocations: 0 bytes)
-  double contraction -> length-3 vector
-  12.807 ns (0 allocations: 0 bytes)
-  full contraction -> scalar
-  5.098 ns (0 allocations: 0 bytes)
-#+end_example
-
 It seems to be as good as we can expect.
-Significantly better than in other technical computing environments.
 
 ** Stokes-flow hydrodynamics
 
@@ -910,18 +629,6 @@ end
 @benchmark SArray(stokeslet(x)) setup=(x=SVector{3,Float64}(1.,2,3))
 #+end_src
 
-#+RESULTS:
-: BenchmarkTools.Trial: 10000 samples with 999 evaluations.
-:  Range [90m([39m[36m[1mmin[22m[39m … [35mmax[39m[90m):  [39m[36m[1m7.621 ns[22m[39m … [35m25.447 ns[39m  [90m┊[39m GC [90m([39mmin … max[90m): [39m0.00% … 0.00%
-:  Time  [90m([39m[34m[1mmedian[22m[39m[90m):     [39m[34m[1m9.088 ns              [22m[39m[90m┊[39m GC [90m([39mmedian[90m):    [39m0.00%
-:  Time  [90m([39m[32m[1mmean[22m[39m ± [32mσ[39m[90m):   [39m[32m[1m9.169 ns[22m[39m ± [32m 0.781 ns[39m  [90m┊[39m GC [90m([39mmean ± σ[90m):  [39m0.00% ± 0.00%
-:
-:   [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m▂[39m [39m▇[34m█[39m[39m▃[32m [39m[39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m
-:   [39m▂[39m▂[39m▂[39m▁[39m▂[39m▁[39m▂[39m▂[39m▂[39m▂[39m▂[39m▁[39m▁[39m▂[39m▂[39m▂[39m▃[39m▁[39m▃[39m▄[39m▂[39m▄[39m█[39m▁[39m█[34m█[39m[39m█[32m▇[39m[39m▂[39m▁[39m▄[39m▅[39m▅[39m▃[39m▁[39m▂[39m▂[39m▂[39m▂[39m▂[39m▁[39m▂[39m▂[39m▂[39m▂[39m▂[39m▁[39m▂[39m▂[39m▂[39m▂[39m▂[39m▁[39m▂[39m▂[39m▂[39m▂[39m▂[39m [39m▃
-:   7.62 ns[90m        Histogram: frequency by time[39m          11 ns [0m[1m<[22m
-:
-:  Memory estimate[90m: [39m[33m0 bytes[39m, allocs estimate[90m: [39m[33m0[39m.
-
 We are left with a matrix of the components of our favorite (symmetric) tensor.
 We can also contract the Stokeslet with a (force) vector to give the Stokeslet velocity field at a given point.
 #+begin_src jupyter-julia
@@ -930,15 +637,6 @@ We can also contract the Stokeslet with a (force) vector to give the Stokeslet v
     f = SVector{3,Float64}(3,2,1) # Force vector
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   6.082 ns (0 allocations: 0 bytes)
-: 3-element SVector{3, Float64} with indices SOneTo(3):
-:  0.03949766576529538
-:  0.036459383783349585
-:  0.033421101801403785
-:END:
 
 If we use a ~StdUnitVector~ as one of the vectors, we should get the corresponding column/row of the Stokeslet as a matrix.
 #+begin_src jupyter-julia
@@ -1051,44 +749,6 @@ let n = 10000
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   8.039 ns (0 allocations: 0 bytes)
-:   78.292 μs (0 allocations: 0 bytes)
-:   6.502 ns (0 allocations: 0 bytes)
-:   47.003 μs (0 allocations: 0 bytes)
-#+begin_example
-10000-element Vector{SVector{3, Float64}}:
- [0.12955348847177117, 0.11612601563868692, 0.11728655639532458]
- [0.06842044684576389, 0.06753160938839398, 0.036013814316825585]
- [0.08148711681620538, 0.06540718306082885, 0.05469603691626963]
- [0.045504135147565405, 0.04758362768627646, 0.06753642628447265]
- [0.019406140463817518, 0.010121603007226634, 0.016715039313658718]
- [0.012185474552533283, 0.05336987180604596, 0.03825708194573998]
- [0.05580277143628564, 0.03950575246494299, 0.05808998963619534]
- [0.028913397171229874, 0.013112246839993357, 0.009476653862238286]
- [0.034594854681283316, 0.1360139546763539, 0.0898275595682104]
- [0.04292955290375288, 0.05434794916609662, 0.033687098127908134]
- [0.012920034817277385, 0.01922976731881907, 0.05614512478736951]
- [0.06619161960918271, 0.041473201813022435, 0.05477309978494419]
- [0.02802894828005554, 0.05058391308805317, 0.013487976910474068]
- ⋮
- [0.02908961663627337, 0.042360258096434275, 0.05749563697668118]
- [0.010444846378683805, 0.011877080082935781, 0.03902422019116715]
- [0.06603758823819122, 0.04863650278977601, 0.03047340461110914]
- [0.005142646697181392, 0.010719196533413217, 0.01091066434040042]
- [0.039711612716988545, 0.040024749759949, 0.02776795074542847]
- [0.04146852713581449, 0.04275554278927026, 0.04363226338152451]
- [0.010193067369092652, 0.019844025723851345, 0.026670748912548694]
- [0.07467239965309733, 0.07294989652550993, 0.061187762264854256]
- [0.04534973045411932, 0.025857890933959193, 0.06274561889008547]
- [0.03848813591802142, 0.017193421818203554, 0.04221407839412543]
- [0.02363790235889515, 0.047064281988640745, 0.02191690050286904]
- [0.027201096962080944, 0.04829115460403732, 0.01994576521229742]
-#+end_example
-:END:
-
-
 Plot the Stokeslet, for fun.
 #+begin_src jupyter-julia
 using CairoMakie
@@ -1101,13 +761,10 @@ let x⃗s = (SVector(x, y, 0.) for x ∈ LinRange(-3, 3, 201), y ∈ LinRange(-3
     # @btime map(x⃗ -> SArray(stokeslet(x⃗)(:, $f⃗)), $x⃗s)
 
     # Makie needs a function in a rather speficic format.
-    on_xy_plane(form, args) = x -> Point2f(SArray(form(SVector(x..., 0.))(args))[SOneTo(2)])
+    on_xy_plane(form, args) = x -> Point2f(SArray(form(SVector(x..., 0.))(args...))[SOneTo(2)])
     streamplot(on_xy_plane(stresslet, (:,n⃗,f⃗)), -3..3, -2..2, axis=(;aspect=DataAspect()))
 end
 #+end_src
-
-#+RESULTS:
-[[file:./.ob-jupyter/489252a10e59b56164f4b1a663284f70cbc8b3df.png]]
 
 ** Known issues
 
@@ -1142,9 +799,6 @@ let # y⃗s = [SVector(x,y,0.) for x ∈ LinRange(-3, 3, 201), y ∈ LinRange(0,
     streamplot(on_xy_plane, -3..3, -2..2, axis=(;aspect=DataAspect()))
 end
 #+end_src
-
-#+RESULTS:
-[[file:./.ob-jupyter/ecd8f670b4f192a8043fc2aec2a2281ff125ba8b.png]]
 
 * Directions for future development
 

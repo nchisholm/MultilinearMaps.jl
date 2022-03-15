@@ -1,11 +1,14 @@
 using Base.Cartesian
 
+const TupleN{T,N} = NTuple{N,T}
+
 # Types to flag safe and unsafe methods
 struct Safe end;   const SAFE = Safe()
 struct Unsafe end; const UNSAFE = Unsafe()
 # Methods marked `UNSAFE` may produce unpredictable behavior
 const Safety = Union{Safe,Unsafe}
 
+# Acts as a safety switch when using @inbounds
 @inline inbounds_safety() = (@boundscheck return SAFE; UNSAFE)
 
 
@@ -47,3 +50,21 @@ function fillfn_cartesianindices!(arr, f::F) where F  # force specialization
     end
     return arr
 end
+
+# Flatten a nested tuple (by a single level)
+@inline flatten(::Tuple{}) = ()
+@inline flatten((t, rest...)::Tuple{Tuple, Vararg}) = (t..., flatten(rest)...)
+@inline flatten((a, rest...)::Tuple{Any, Vararg}) = (a, flatten(rest)...)
+@inline flatten(args...) = flatten(args)
+
+# Return the types contained in a tuple
+# fieldtypes itself is not type stable
+@generated tupletypes(::Type{T}) where {T<:Tuple} = fieldtypes(T)
+@generated tuplecount(::Type{T}) where {T<:Tuple} = fieldcount(T)
+@inline tupletype(::Type{T}, i) where {T<:Tuple} = fieldtype(T, i)
+
+
+const StaticSize{N} = TupleN{StaticInt,N}
+
+@generated staticsize(::Val{Sz}) where Sz = Tuple{map(i -> StaticInt{i}, Sz)...}
+@inline staticsize(sz...) = staticsize(Val(sz))

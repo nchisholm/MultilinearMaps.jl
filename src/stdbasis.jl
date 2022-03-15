@@ -3,12 +3,14 @@ import LinearAlgebra: dot
 import StaticArrays: same_size, size_tuple, _vecdot
 import Base: (==)
 
-export StdUnitVector, basis
+export StdUnitVector, standardbasis
 
 
 # TODO: build these up
-abstract type Basis{D} end
-struct StandardBasis{D} end
+#
+# abstract type Basis{D} end
+# struct StandardBasis{D} end
+#
 # Could define `iterate` and `getindex` on singleton types <: `StandardBasis{N}
 # where N`, to produce the `N` standard unit vectors.  We would also have
 # dualbasis(StandardBasis{3}) === StandardBasis{3}()
@@ -45,8 +47,24 @@ end
 Return the `N` standard unit vectors of an `N`-dimensional standard
 basis.
 """
-basis(::Type{StdUnitVector{N}}) where N =
-    ntuple(i -> StdUnitVector{N}(i), Val(N))
+@inline standardbasis(N::Int) = ntuple(i -> StdUnitVector{N}(i), Val(N))
+@inline standardbasis(N::Integer) = standardbasis(convert(Int, N))
+
+# TODO: implement multidimensional basis sets
+# (like Cartesian indices, but over basis vectors)
+@inline standardbasis(Ns::TupleN{<:Integer}) = map(standardbasis, Ns)
+# @inline standardbasis(::TupleN{<:Integer}) =
+#     error("Not implemented: multidimensional standard basis not yet supported.")
+
+@inline standardbasis(Ns::Vararg{<:Integer}) = standardbasis(Ns)
+
+@inline standardbasis(iter, args...) =
+    standardbasis(ArrayInterface.size(iter, args...))
+
+function standardbasistype(::MultilinearMap{Sz}, i::Int) where Sz
+    # @assert 1 ≤ i ≤ tuplecount(Sz)
+    StdUnitVector{known(tupletype(Sz, i))}
+end
 
 """
     direction(e::StdUnitVector)::Int
@@ -61,13 +79,12 @@ Returns an `Int` indicatring the direction in which `e` points.
 
 ==(es::StdUnitVector...) = ===(es...)
 
-# I read somewhere that @inline is required to ensure that @inbounds works.
 @inline function Base.getindex(e::StdUnitVector, i::Int)
     @boundscheck checkbounds(e, i)  # NOTE: uses `size(e)`
     direction(e) == i
 end
 
-Base.show(io::IO, e::StdUnitVector{D}) where D = print(io, "𝐞{$D}_$(direction(e))")
+Base.show(io::IO, e::StdUnitVector{D}) where D = print(io, "𝐞̂{$D}_$(direction(e))")
 
 # The dot product
 
