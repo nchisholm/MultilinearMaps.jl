@@ -1,15 +1,20 @@
 module MultilinearMaps
 
+
 using Base: @propagate_inbounds
 import Base
 using Static
-using StaticArrays
+import ArrayInterface as Arr
+using StaticArrays: StaticArray, sacollect
+import StaticArrays: StaticArrays as _SA, similar_type
+
 
 include("util.jl")
 include("MultilinearMap.jl")
-include("SlicedMultilinearMap.jl")
+include("PartialMap.jl")
 include("stdbasis.jl")
 include("arraylike.jl")
-include("iteration.jl")
+include("algebra.jl")
 
-end
+
+end # module

@@ -1,7 +1,6 @@
 using LinearAlgebra
 import LinearAlgebra: dot
-import StaticArrays: same_size, size_tuple, _vecdot
-import Base: (==)
+import StaticArrays: StaticVector
 
 export StdUnitVector, standardbasis
 
@@ -59,12 +58,7 @@ basis.
 @inline standardbasis(Ns::Vararg{<:Integer}) = standardbasis(Ns)
 
 @inline standardbasis(iter, args...) =
-    standardbasis(ArrayInterface.size(iter, args...))
-
-function standardbasistype(::MultilinearMap{Sz}, i::Int) where Sz
-    # @assert 1 ≤ i ≤ tuplecount(Sz)
-    StdUnitVector{known(tupletype(Sz, i))}
-end
+    standardbasis(Arr.size(iter, args...))
 
 """
     direction(e::StdUnitVector)::Int
@@ -77,7 +71,7 @@ Returns an `Int` indicatring the direction in which `e` points.
 # @inline Base.size(e::StdUnitVector) = (length(e),)
 # Base.IndexStyle(::StdUnitVector) = IndexLinear()
 
-==(es::StdUnitVector...) = ===(es...)
+Base.:(==)(es::StdUnitVector...) = ===(es...)
 
 @inline function Base.getindex(e::StdUnitVector, i::Int)
     @boundscheck checkbounds(e, i)  # NOTE: uses `size(e)`
@@ -89,19 +83,19 @@ Base.show(io::IO, e::StdUnitVector{D}) where D = print(io, "𝐞̂{$D}_$(directi
 # The dot product
 
 @inline dot(e1::StdUnitVector, e2::StdUnitVector) =
-    (same_size(e1, e2); e1 === e2)
+    (_SA.same_size(e1, e2); e1 === e2)
 
 # @inline dot(e::StdUnitVector{D}, v::StaticVector{D}) where D =
 #     (@boundscheck _check_dot(e, v); @inbounds v[direction(e)])
 
 @inline dot(e::StdUnitVector, v::StaticVector) =
-    _vecdot(same_size(e, v), e, v, dot)
+    _SA._vecdot(_SA.same_size(e, v), e, v, dot)
 @inline dot(v::StaticVector, e::StdUnitVector) = dot(e, v)
 
-@inline function _vecdot(sz::Size, a::StdUnitVector, b::StaticArray, ::typeof(dot))
+@inline function _SA._vecdot(sz::_SA.Size, a::StdUnitVector, b::StaticArray, ::typeof(dot))
     # eltype(StdUnitVector) == `Bool` so...
     @assert promote_type(eltype(a), eltype(b)) === eltype(b)
-    if Length(sz) == 0  # No elements!
+    if _SA.Length(sz) == 0  # No elements!
         # should be unreachable because there is no zero-dimensional unit vector
         zero(eltype(b))
     else
@@ -110,7 +104,7 @@ Base.show(io::IO, e::StdUnitVector{D}) where D = print(io, "𝐞̂{$D}_$(directi
 end
 
 @inline dot(e::StdUnitVector, v::AbstractArray) =
-    dot(e, SizedArray{size_tuple(Size(e))}(v))
+    dot(e, _SA.SizedArray{_SA.size_tuple(_SA.Size(e))}(v))
 @inline dot(v::AbstractArray, e::StdUnitVector) = dot(e, v)
 
 # TODO: add specialized arithmetic operations +, -,
