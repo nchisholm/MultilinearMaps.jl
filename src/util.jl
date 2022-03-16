@@ -64,7 +64,7 @@ end
 @inline tupletype(::Type{T}, i) where {T<:Tuple} = fieldtype(T, i)
 
 
-const StaticSize{N} = TupleN{StaticInt,N}
+const StaticSize{N} = NTuple{N,StaticInt}
 
 @generated staticsize(::Val{Sz}) where Sz = Tuple{map(i -> StaticInt{i}, Sz)...}
-@inline staticsize(sz...) = staticsize(Val(sz))
+@inline staticsize(sz::Int...) = staticsize(Val(sz))

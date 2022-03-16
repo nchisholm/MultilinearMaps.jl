@@ -14,6 +14,7 @@ end
 
 const MultilinearMapN{N} = MultilinearMap{<:NTuple{N,StaticInt}}
 const MultilinearForm{N,D} = MultilinearMap{NTuple{N,StaticInt{D}}}
+const ScalarMap = MultilinearMap{Tuple{}}
 
 struct AtomicMultilinearMap{Sz<:StaticSize, F} <: MultilinearMap{Sz}
     impl::F
@@ -25,5 +26,6 @@ end
 
 @inline argtypes(f::MultilinearMap) = argtypes(typeof(f))
 
+@inline (f::ScalarMap)() = f.impl()
 @inline (f::MultilinearMapN{N})(vs::Vararg{AbstractVector,N}) where N =
     f.impl(vs...)

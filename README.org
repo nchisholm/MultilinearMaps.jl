@@ -50,11 +50,17 @@ using StaticArrays: sacollect
 using MultilinearMaps
 import MultilinearMaps as MM
 
-using BenchmarkTools, Profile, Test
+using Test
+using BenchmarkTools
+
+if !@isdefined(BenchmarkTools)
+    macro btime(args...)
+        :(println("<benchmark skipped>"))
+    end
+end
 
 showit(x) = (show(stdout, "text/plain", x); println())
 #+end_src
-:END:
 
 
 #+TITLE: ~MultilinearMaps~
@@ -136,6 +142,14 @@ let # SDims = NTuple{4,3}
 end
 #+end_src
 
+#+RESULTS:
+:   Iteration over `CartesianIndices`
+: <benchmark skipped>
+:   Using `Base.Cartesian`
+: <benchmark skipped>
+: `SArray` via `sacollect`
+: <benchmark skipped>
+
 Use of ~sacollect~ is most efficient because it effectively unrolls all the loops.
 However, using approaches with looping might be beneficial in cases where loop unrolling would create too much work for the compiler.
 We will try to sacrifice as little performance over these "baseline" functions on indices as possible in our implementation below.
@@ -160,6 +174,12 @@ let e = standardbasis(3)
     [e[i] ⋅ e[j] for j ∈ eachindex(e), i ∈ eachindex(e)]
 end
 #+end_src
+
+#+RESULTS:
+: 3×3 Matrix{Bool}:
+:  1  0  0
+:  0  1  0
+:  0  0  1
 
 Note that the matrix elements are of type ~Bool~ values is created ~StdUnitVector~.
 This is a direct result of the boolean tests performed for each element of the matrix.
@@ -207,6 +227,10 @@ using Test
 end;
 #+end_src
 
+#+RESULTS:
+: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: Unit Vectors  | [32m  23  [39m[36m   23[39m
+
 ** Performance
 
 When creating a unit vector, one generally wants to validate that its direction is appropriate for the vector space, i.e., ~1 ≤ d ≤ D~.
@@ -215,6 +239,29 @@ Indeed, constructing a two-dimensional unit vector pointing into the third dimen
 StdUnitVector{2}(3)
 #+end_src
 
+#+RESULTS:
+:RESULTS:
+# [goto error]
+#+begin_example
+DomainError with 3:
+No vector in 3th dimension of a basis spanning ℝ^2
+
+Stacktrace:
+ [1] _throw_dims_error(D::Int64, d::Int64)
+   @ MultilinearMaps ~/Development/julia/MultilinearMaps/src/stdbasis.jl:43
+ [2] StdUnitVector
+   @ ~/Development/julia/MultilinearMaps/src/stdbasis.jl:29 [inlined]
+ [3] StdUnitVector{2}(d::Int64)
+   @ MultilinearMaps ~/Development/julia/MultilinearMaps/src/stdbasis.jl:33
+ [4] top-level scope
+   @ In[7]:1
+ [5] eval
+   @ ./boot.jl:373 [inlined]
+ [6] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
+   @ Base ./loading.jl:1196
+#+end_example
+:END:
+
 Like bounds checking of array access, this comes with some overhead.
 However, we may want to elide such checks if we are confident that the unit vectors we construct are valid.
 Therefore, we provide "unsafe construction" of unit vectors to elide the dimensionality check.
@@ -222,6 +269,11 @@ Therefore, we provide "unsafe construction" of unit vectors to elide the dimensi
 #+begin_src jupyter-julia
 StdUnitVector{2}(MM.UNSAFE, 3)
 #+end_src
+
+#+RESULTS:
+: 2-element StdUnitVector{2} with indices SOneTo(2):
+:  0
+:  0
 
 We can check for any overhead of the ~UNSAFE~ method to direct computation on the indices, and there seems to be none.
 #+begin_src jupyter-julia :results scalar
@@ -241,6 +293,14 @@ out_unsafe = @btime(MM.fillfn!(A, _skew ∘ inds2uvecs(UNSAFE)),
 @assert out_ixfn == out_safe == out_unsafe
 #+end_src
 
+#+RESULTS:
+: Function of indices
+: <benchmark skipped>
+: SAFE unit vectors (validity checked)
+: <benchmark skipped>
+: UNSAFE unit vectors (no validity check)
+: <benchmark skipped>
+
 Interestingly, completely explicit loops are little faster, but why?
 
 #+begin_src jupyter-julia
@@ -254,6 +314,9 @@ Interestingly, completely explicit loops are little faster, but why?
     setup=(A = MArray{NTuple{4,3}, Int64}(undef))
 );
 #+end_src
+
+#+RESULTS:
+: <benchmark skipped>
 
 
 * Multilinear maps
@@ -295,6 +358,9 @@ using Test
 end;
 #+end_src
 
+#+RESULTS:
+: [0m[1mTest Summary:              | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: Multilinear Form -> Scalar | [32m   9  [39m[36m    9[39m
 Check that things work efficiently (no allocations, e.g.).
 
 #+begin_src jupyter-julia :results scalar
@@ -349,6 +415,10 @@ Some tests:
     end
 end;
 #+end_src
+
+#+RESULTS:
+: [0m[1mTest Summary:                       | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: Multilinear Form -> Contracted Form | [32m   6  [39m[36m    6[39m
 
 We might want more functionality in the future, like the ability to permute the argument order of the vector arguments.
 We leave that to later work.
@@ -406,6 +476,10 @@ Since the size of each dimension is usually small and a fixed constant, we integ
 end;
 #+end_src
 
+#+RESULTS:
+: [0m[1mTest Summary:       | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: StaticArrays traits | [32m   4  [39m[36m    4[39m
+
 
 #+begin_src jupyter-julia
 let
@@ -425,6 +499,10 @@ Let's get a slice or two of the ~skew~ tensor 🍕.
     @test SArray(skew(:, :, ê{3}(3), ê{3}(2))) == skew_components[:,:,3,2]
 end;
 #+end_src
+
+#+RESULTS:
+: [0m[1mTest Summary:     | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: More contractions | [32m   2  [39m[36m    2[39m
 
 Note that components of the tensor the user has not asked for are never computed.
 
@@ -484,7 +562,7 @@ end
 ** Known issues
 
 For some reason, type aliases of ~SArray~ like ~SMatrix~ don't work.
-#+begin_src jupyter-julia
+#+begin_src jupyter-julia :eval no
 SMatrix(inner)  # FIXME: this makes to do but is broken.
 #+end_src
 
@@ -552,6 +630,10 @@ _issymmetric(A::AbstractArray{<:Any, 2}) =
     end
 end;
 #+end_src
+
+#+RESULTS:
+: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
+: Harmonics     | [32m  22  [39m[36m   22[39m
 
 Lets check the performance of these functions.
 #+begin_src jupyter-julia
