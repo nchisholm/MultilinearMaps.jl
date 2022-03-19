@@ -5,7 +5,7 @@
 # combinations of multilinear maps and generally produce another multilinear
 # map.  Here, we define the necessary operations `ScalarMultiple` and `Sum`.
 #
-# TODO: outer products, contractions?
+# TODO: tensor products, contractions?
 #
 
 
@@ -67,10 +67,3 @@ end
 
 
 
-# # Produce the operands of a non-atomic MultilinearMap
-# @inline operands(::Type{MM}) where {MM<:MultilinearMap} = f -> operands(MM, f)
-# @inline operands(f::MM) where {MM<:MultilinearMap} = operands(MM, f)
-#
-# @inline operands(::Type{MM}, f::MM) where {MM<:Sum} = f.operands
-# @inline operands(::Type{MM}, f::MM) where {MM<:ScalarMultiple} = (f.parent, f.scalar)
-# @inline operands(::Type{MM}, f::MM) where {MM<:MultilinearMap} = (f,)  # Atomic

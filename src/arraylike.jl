@@ -9,8 +9,9 @@ Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
 @generated Arr.axes_types(::Type{<:MultilinearMap{Sz}}) where Sz =
     Tuple{map(D -> Arr.SOneTo{known(D)}, fieldtypes(Sz))...}
 
-@generated Arr.axes(::T) where {T<:MultilinearMap} =
-    map(T -> T(), tupletypes(Arr.axes_types(T)))
+@generated Arr.axes(::T) where {N, T<:MultilinearMap{<:SizeS{N}}} =
+    ntuple(i -> Arr.axes_types(T, i)(), Val(N))
+    # map(T -> T(), tupletypes(Arr.axes_types(T)))
 
 @generated Base.length(::Type{<:MultilinearMap{Sz}}) where {Sz} =
     mapreduce(known, *, tupletypes(Sz))
@@ -18,8 +19,7 @@ Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
 
 @inline Base.axes(f::MultilinearMap) = Arr.axes(f)
 
-@inline Base.size(f::MultilinearMap, args...) =
-    map(Int, Arr.size(f, args...))
+@inline Base.size(f::MultilinearMap, dim...) = dynamic(Arr.size(f, dim...))
 
 @inline Base.CartesianIndices(f::MultilinearMap) = CartesianIndices(axes(f))
 
@@ -41,6 +41,8 @@ Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
 
 @inline Base.lastindex(f::MultilinearMap) = last(CartesianIndices(f))
 
+# FIXME: need eltype(::Type{MM}) where {MM<:MultilinearMap} = ...
+# Below is incorrect...
 @inline Base.eltype(f::MultilinearMap) = eltype(first(f))
 
 

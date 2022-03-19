@@ -1,6 +1,7 @@
 export MultilinearMap, MultilinearForm, AtomicMultilinearMap
 
 
+# XXX remove and change to SizeS
 const Size{N} = NTuple{N,StaticInt}
 
 

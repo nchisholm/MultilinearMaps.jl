@@ -1,64 +1,86 @@
 using LinearAlgebra
 import LinearAlgebra: dot
-import StaticArrays: StaticVector
+# using StaticArrays: StaticVector, StaticMatrix
 
-export StdUnitVector, standardbasis
+export StdUnitVector, StdBasis
 
+"""
+    StdUnitVector{D,T}([::Safety=Safe,] d::Int)
 
-# TODO: build these up
-#
-# abstract type Basis{D} end
-# struct StandardBasis{D} end
-#
-# Could define `iterate` and `getindex` on singleton types <: `StandardBasis{N}
-# where N`, to produce the `N` standard unit vectors.  We would also have
-# dualbasis(StandardBasis{3}) === StandardBasis{3}()
-# Then, we could work with to arbitrary sets of basis vectors ...
+Represents a standard unit vector of a vector space over `T`.
 
-struct StdUnitVector{D} <: StaticVector{D,Bool}
+The unit vector points along the `d`th dimension of the vector space. The `d`th
+element of a `StdUnitVector` is equal to `one(T)` and all others are equal to
+`zero(T)`.  Note that, upon construction, `T` is automatically narrowed to the
+narrowest element type that fully represents elements of the basis vectors using
+`suv_eltype`.  For example, if the vector space is over the `Real` numbers,
+
+    StdUnitVector{D}(Real, 1) === StdUnitVector{D,Bool}(1) == [1, 0]
+
+Setting `safety` to `Unsafe()` skips checking if `1 ≤ d ≤ D`, which may improve
+performace.
+
+Values of type `T` are assumed to be members of an algebraic field.   If `T` is
+not supplied, it is defaulted to `Real`.
+"""
+struct StdUnitVector{D,T} <: AbstractVector{T}
     direction::Int
-    @inline function StdUnitVector{D}(::Unsafe, d::Int) where D
-        D isa Int && D > 0 || _throw_dimensionality_error(D)
-        new(d)
-    end
+
+    # For internal use; does not narrow T.  Use outer constructors instead.
+    @inline StdUnitVector{D,T}(s::Safety, d::Int) where {D,T} =
+        new{valid_space_ndims(D), suv_eltype(T)}(valid_space_dim(s,D,d))
 end
-# Could also define the notion of a scaled unit vector
+# TODO scaled unit vectors?
+# TODO unit vectors are also (multi)linear maps... (Uh oh, Ouroborio!)
 
-@inline function StdUnitVector{D}(::Safe, d::Int) where D
-    1 ≤ d ≤ D || _throw_dims_error(D, d)
-    StdUnitVector{D}(UNSAFE, d::Int)
-end
+# Safety first!
+@inline StdUnitVector{D,T}(d::Int) where {D,T} =
+    StdUnitVector{D,T}(SAFE, d::Int)
 
-@inline StdUnitVector{D}(d::Int) where D = StdUnitVector{D}(SAFE, d::Int)
+# Assume vector space is isomporphic to ℝᴰ by default.
+@inline StdUnitVector{D}(s::Safety, d::Int) where D =
+    StdUnitVector{D,Real}(s, d)
 
-
-# @inline _check_dimensionality(::Val{D}) where D =
-#     D isa Int && D > 0 || _throw_dimensionality_error(D)
-# @inline _check_direction(::Val{D}, d::Int) where D =
-#     1 ≤ d ≤ D || _throw_dims_error(D, d)
-
-@noinline _throw_dimensionality_error(D) =
-    throw(DomainError(D, "Number of dimensions `D` must be a positive `Int`"))
-@noinline _throw_dims_error(D, d) =
-    throw(DomainError(d, "No vector in $(d)th dimension of a basis spanning ℝ^$D"))
+@inline StdUnitVector{D}(d::Int) where D =
+    StdUnitVector{D,Real}(SAFE, d)
 
 """
-Return the `N` standard unit vectors of an `N`-dimensional standard
-basis.
+    suv_eltype(T::Type)::Type
+
+Compute the minimal eltype of a standard unit vector belonging to a vector
+space over a given type `T`.  For example `suv_eltype(Real) === Bool`
+because a standard basis over the real numbers is minimally expressed as
+
+    (𝐞̂₁, 𝐞̂₂) == (Bool[1, 0], Bool[0, 1])
+
+An error is thrown if an appropriate element type is unknown because no
+corresponding method for `suv_eltype(T)` has been implemented.
 """
-@inline standardbasis(N::Int) = ntuple(i -> StdUnitVector{N}(i), Val(N))
-@inline standardbasis(N::Integer) = standardbasis(convert(Int, N))
+@inline suv_eltype(::Type{T}) where {T<:Real} = Bool
 
-# TODO: implement multidimensional basis sets
-# (like Cartesian indices, but over basis vectors)
-@inline standardbasis(Ns::TupleN{<:Integer}) = map(standardbasis, Ns)
-# @inline standardbasis(::TupleN{<:Integer}) =
-#     error("Not implemented: multidimensional standard basis not yet supported.")
+# @inline suv_eltype(::Type{<:Complex}) = Complex{Bool}
 
-@inline standardbasis(Ns::Vararg{<:Integer}) = standardbasis(Ns)
+@noinline suv_eltype(::Type{T}) where {T<:Number} =
+    error("Narrowest element type of a standard unit vector of a vector space " *
+          "over the field of $T numbers is unknown.")
+@noinline suv_eltype(::Type{T}) where T =
+    error("Narrowest element type of vector space over the field of $T values is unknown.")
 
-@inline standardbasis(iter, args...) =
-    standardbasis(Arr.size(iter, args...))
+# Validate that the number of spatial dimensions of a vector space is nonegative
+@inline valid_space_ndims(D) =
+    (D isa Int && D > 0 || _space_ndims_err(D); return D)
+@noinline _space_ndims_err(D) =
+    throw(DomainError(D, "Dimension of vector space must be a positive `Int`"))
+
+# Validate that the spatial dimension in which a unit vector points is
+# appropriate for a vector space with `D` dimensions.
+@inline valid_space_dim(::Safe, D::Int, d::Int) =
+    (1 ≤ d ≤ D || _space_dim_err(D, d); return d)
+# ... Or don't validate for performance reasons.
+@inline valid_space_dim(::Unsafe, D::Int, d::Int) = d
+
+@noinline _space_dim_err(D, d) =
+    throw(DomainError(d, "No vector in $(d)th dimension of a $D-dimensional vector space."))
 
 """
     direction(e::StdUnitVector)::Int
@@ -67,48 +89,151 @@ Returns an `Int` indicatring the direction in which `e` points.
 """
 @inline direction(e::StdUnitVector) = e.direction
 
-# @inline Base.length(::StdUnitVector{D}) where D = D
-# @inline Base.size(e::StdUnitVector) = (length(e),)
-# Base.IndexStyle(::StdUnitVector) = IndexLinear()
+# Array Interface
 
-Base.:(==)(es::StdUnitVector...) = ===(es...)
+Base.IndexStyle(::Type{<:StdUnitVector}) = IndexLinear()
+
+@inline Arr.axes_types(::Type{<:StdUnitVector{D}}) where {D} = Tuple{Arr.SOneTo{D}}
+@inline Arr.axes(e::StdUnitVector) = tuple(Arr.axes_types(e, static(1))())
+
+@inline Base.axes(e::StdUnitVector) = Arr.axes(e::StdUnitVector)
+
+@inline Base.length(::StdUnitVector{D}) where {D} = D
+@inline Base.size(e::StdUnitVector) = dynamic(Arr.size(e))
+
+@inline Base.getindex(e::StdUnitVector, ::Colon) = e
 
 @inline function Base.getindex(e::StdUnitVector, i::Int)
-    @boundscheck checkbounds(e, i)  # NOTE: uses `size(e)`
+    @boundscheck checkbounds(e, i)
     direction(e) == i
 end
 
-Base.show(io::IO, e::StdUnitVector{D}) where D = print(io, "𝐞̂{$D}_$(direction(e))")
+@inline Base.getindex(::StdUnitVector, ::Any) = error("Not implemented")
+# @inline Base.getindex(e::StdUnitVector, i...) = SubArray(e, i)
+
+# Avoid indirection of the SubArray wrapper
+@inline Base.view(e::StdUnitVector, ::Colon) = e
+
+Base.show(io::IO, e::StdUnitVector) =
+    print(io, typeof(e), "(", direction(e), ")")
+Base.show(io::IO, ::MIME"text/plain", e::StdUnitVector) =
+    print(io,
+          "𝐞̂_", direction(e), " ",
+          "(standard unit vector of a vector space {>:Bool}^$(length(e)))")
 
 # The dot product
 
 @inline dot(e1::StdUnitVector, e2::StdUnitVector) =
-    (_SA.same_size(e1, e2); e1 === e2)
+    (samesize(e1, e2); e1 === e2)
 
-# @inline dot(e::StdUnitVector{D}, v::StaticVector{D}) where D =
-#     (@boundscheck _check_dot(e, v); @inbounds v[direction(e)])
+@inline dot(e::StdUnitVector, v::AbstractVector) =
+    _dot(samesize(e,v), promote_eltype(e,v), e, v)
 
-@inline dot(e::StdUnitVector, v::StaticVector) =
-    _SA._vecdot(_SA.same_size(e, v), e, v, dot)
-@inline dot(v::StaticVector, e::StdUnitVector) = dot(e, v)
+@inline dot(v::AbstractVector, e::StdUnitVector) = dot(e, v)  # commute
 
-@inline function _SA._vecdot(sz::_SA.Size, a::StdUnitVector, b::StaticArray, ::typeof(dot))
-    # eltype(StdUnitVector) == `Bool` so...
-    @assert promote_type(eltype(a), eltype(b)) === eltype(b)
-    if _SA.Length(sz) == 0  # No elements!
-        # should be unreachable because there is no zero-dimensional unit vector
-        zero(eltype(b))
-    else
-        @inbounds b[direction(a)]
+@inline function _dot(::Size{0}, T::Type, e::StdUnitVector, v::AbstractVector)
+    @assert false   # Presently, zero dimensional unit vectors not defined
+    zero(T)
+end
+
+@inline function _dot(::Size, ::Type{T}, e::StdUnitVector, v::AbstractVector) where {T<:Real}
+    @inbounds v[direction(e)]::T
+end
+
+# TODO: add specialized arithmetic operations +, -, scalar and matrix
+# multiplication (*), etc.  For example, (+) should spit out a `StaticVector`
+# since the size is known.  Right now, usual `Array`s are emitted.
+
+
+"""
+    Basis{D,T}
+
+Represent a `D`-dimensional basis for a vector space over a field of type `T`.
+"""
+abstract type Basis{D,T} end
+
+
+"""
+    StdBasis{D,T}()
+    StdBasis{D}(::Type{T})
+
+The set of "standard basis vectors"; the ordered collection of each possible
+instance of `StdUnitVector{D,T}`.
+
+See also `StdUnitVector` and `Basis`.
+"""
+struct StdBasis{D,T} <: Basis{D,T}
+    function StdBasis{D,T}() where {D,T}
+        new{valid_space_ndims(D), T}()
     end
 end
 
-@inline dot(e::StdUnitVector, v::AbstractArray) =
-    dot(e, _SA.SizedArray{_SA.size_tuple(_SA.Size(e))}(v))
-@inline dot(v::AbstractArray, e::StdUnitVector) = dot(e, v)
+# Because writing StdBasis{D}(T::Type) might be easier to remember than
+# StdBasis{D,T}() --- it's easy to accidentally omit the trailing `()`.
+@inline StdBasis{D}(::Type{T}) where {D,T} = StdBasis{D,T}()
 
-# TODO: add specialized arithmetic operations +, -,
-# scalar and matrix multiplication (*), etc.
+@inline StdBasis{D}() where D = StdBasis{D}(Real)  # basis in ℝᴰ by default
 
-# For example, (+) should spit out a `StaticVector` since the size is known.
-# Right now, usual `Array`s are emitted.
+@inline Base.eltype(::Type{StdBasis{D,T}}) where {D,T} = StdUnitVector{D,T}
+
+# @inline Base.IteratorSize(::Type{<:StdBasis}) = Base.HasShape{1}()
+
+# @inline Base.ndims(::Type{<:StdBasis}) = 1
+# @inline Base.ndims(::SB) where {SB<:StdBasis} = Base.ndims(SB)
+
+@inline Base.iterate(b::StdBasis{D}, i::Int=1) where D =
+    i ≤ D ? (eltype(b)(UNSAFE, i), i+1) : nothing
+
+# Array Interface
+
+# @inline Arr.axes_types(::Type{T}) where {T<:StdBasis} =
+#     Arr.axes_types(eltype(T))
+# @inline Arr.axes(sb::StdBasis) = Arr.axes(first(sb))
+#
+# @inline Base.axes(sb::StdBasis) = Arr.axes(sb::StdBasis)
+
+@inline Base.length(::StdBasis{D}) where D = D
+# @inline Base.size(sb::StdBasis, dim...) = dynamic(Arr.size(sb, dim...))
+
+@inline Base.firstindex(::StdBasis) = 1
+@inline Base.lastindex(sb::StdBasis) = length(sb)
+
+@inline _getindex(✓::Safety, sb::StdBasis, i::Int) = eltype(sb)(✓, i)
+
+Base.@propagate_inbounds Base.getindex(sb::StdBasis, i::Int) =
+    _getindex(inbounds_safety(), sb, i)
+
+Base.Tuple(sb::StdBasis{D}) where D = NTuple{3}(sb)
+
+# @inline Base.getindex(sb::StdBasis, ::Colon, ::Colon) = sb
+#
+# @inline function Base.getindex(sb::StdBasis{D,T}, ::Colon, j::Int) where {D,T}
+#     @boundscheck checkbounds(sb, :, j)
+#     StdUnitVector{D,T}(UNSAFE, j)
+# end
+# # Symmetry of the standard basis vector matrix.
+# @inline Base.getindex(sb::StdBasis, i::Int, ::Colon) = sb[:,i]
+#
+# @inline function Base.getindex(sb::StdBasis, i::Int, j::Int)
+#     @boundscheck checkbounds(sb, i, j)
+#     @inbounds sb[:,j][i]
+# end
+#
+# @noinline Base.getindex(::StdBasis, i::Any, j::Any) = error("Not implemented")
+#
+# @inline Base.view(sb::StdBasis, I::Vararg{Union{Colon,Int}}) =
+#     Base.getindex(sb, I...)
+
+Base.show(io::IO, sb::StdBasis) = print(io, typeof(sb), "()")
+function Base.show(io::IO, ::MIME"text/plain", sb::StdBasis)
+    D = length(sb)
+    T = eltype(eltype(sb))
+    print(io,
+          "Standard basis of a vector space {>:", T, "}^", D, ":\n",
+          "  {", join(ntuple(i -> "𝐞̂_$i", Val(D)), ", "), "}")
+end
+
+
+# struct TensorProduct{T, N, VV<:NTuple{N,<:AbstractVector{T}}} <: AbstractArray{T,N}
+#     operands::VV
+# end

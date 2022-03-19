@@ -44,7 +44,7 @@
 #+begin_src jupyter-julia :results silent :exports none
 using LinearAlgebra
 using Static
-using ArrayInterface
+using ArrayInterface: ArrayInterface as Arr
 using StaticArrays
 using StaticArrays: sacollect
 using MultilinearMaps
@@ -165,9 +165,9 @@ Now, if we evaluate ~dot~ where the operands are pairs of ~StdUnitVector{N}~​s
 For example, the dot product between two unit vectors, ~[1, 0, 0]~ and ~[0, 0, 1]~, is reduced to testing whether ~1==3~, which evaluates to ~false == 0~.
 
 Below, we construct a \(3×3\) identity matrix using ~StdUnitVector~​s.
-#+begin_src jupyter-julia
-let e = standardbasis(3)
-    [e[i] ⋅ e[j] for j ∈ eachindex(e), i ∈ eachindex(e)]
+#+begin_src jupyter-julia :results scalar
+let sbasis = StdBasis{3}(Real)
+    [e1 ⋅ e2 for e1 ∈ sbasis, e2 ∈ sbasis]
 end
 #+end_src
 
@@ -184,36 +184,38 @@ Indeed, the code above is equivalent to
 using Test
 
 @testset "Unit Vectors" begin
+    e = StdUnitVector
     @testset "Construction" begin
-        @test StdUnitVector{2}(1) isa StaticVector{2,Bool}
-        @test length(StdUnitVector{2}(1)) == only(size(StdUnitVector{2}(1)))
-        @test_throws DomainError StdUnitVector{2}(3)
-        @test_throws DomainError StdUnitVector{1}(0)
-        @test only(StdUnitVector{1}(1))
+        @test Arr.size(e{2}(1)) isa MM.SizeS{1}
+        @test length(e{2}(1)) == only(size(e{2}(1)))
+        @test_throws DomainError e{2}(3)
+        @test_throws DomainError e{1}(0)
+        @test only(e{1}(1))
     end
     @testset "Equality" begin
-        @test StdUnitVector{2}(1) == StdUnitVector{2}(1)
-        @test StdUnitVector{2}(1) !== StdUnitVector{2}(2)
-        @test StdUnitVector{2}(1) !== StdUnitVector{3}(1)
-        @test StdUnitVector{2}(1) == Bool[true, false]
-        @test StdUnitVector{2}(1) !== Bool[true, false, false]
+        @test e{2}(1) == e{2}(1)
+        @test e{2}(1) !== e{2}(2)
+        @test e{2}(1) !== e{3}(1)
+        @test e{2}(1) == Bool[true, false]
+        @test e{2}(1) !== Bool[true, false, false]
     end
     @testset "Dot product" begin
-        @test @inferred StdUnitVector{1}(1) ⋅ StdUnitVector{1}(1)
-        @test StdUnitVector{2}(1) ⋅ StdUnitVector{2}(1)
-        @test !(StdUnitVector{2}(1) ⋅ StdUnitVector{2}(2))
-        @test !(StdUnitVector{2}(2) ⋅ StdUnitVector{2}(1))
-        @test StdUnitVector{2}(1) ⋅ [1,2] == [1,2] ⋅ StdUnitVector{2}(1) == 1
-        @test StdUnitVector{2}(2) ⋅ [1,2] == [1,2] ⋅ StdUnitVector{2}(2) == 2
-        @test StdUnitVector{2}(1) ⋅ SVector(1,2) == SVector(1,2) ⋅ StdUnitVector{2}(1) == 1
-        @test StdUnitVector{2}(2) ⋅ [1,2] == [1,2] ⋅ StdUnitVector{2}(2) == 2
-        @test_throws DimensionMismatch StdUnitVector{2}(1) ⋅ StdUnitVector{1}(1)
-        @test_throws DimensionMismatch SVector(1,2) ⋅ StdUnitVector{1}(1)
-        @test_throws DimensionMismatch [1,2] ⋅ StdUnitVector{1}(1)
+        @test @inferred e{1}(1) ⋅ e{1}(1)
+        @test e{2}(1) ⋅ e{2}(1)
+        @test !(e{2}(1) ⋅ e{2}(2))
+        @test !(e{2}(2) ⋅ e{2}(1))
+        @test e{2}(1) ⋅ [1,2] == [1,2] ⋅ e{2}(1) == 1
+        @test e{2}(2) ⋅ [1,2] == [1,2] ⋅ e{2}(2) == 2
+        @test e{2}(1) ⋅ SVector(1,2) == SVector(1,2) ⋅ e{2}(1) == 1
+        @test e{2}(2) ⋅ [1,2] == [1,2] ⋅ e{2}(2) == 2
+        @test_throws DimensionMismatch e{2}(1) ⋅ e{1}(1)
+        @test_throws DimensionMismatch SVector(1,2) ⋅ e{1}(1)
+        @test_throws DimensionMismatch [1,2] ⋅ e{1}(1)
     end
     # Other
-    @test StdUnitVector{2}(1) + StdUnitVector{2}(2) === ones(SVector{2,eltype(true+true)})
-    @test @inferred(StdUnitVector{2}(2) + [1,0]) == ones(2)
+    @test @inferred(e{2}(2) + [1,0]) == ones(2)
+    @test SVector{2}(e{2}(1) + e{2}(2)) === ones(SVector{2,eltype(true+true)})
+    @test_broken SVector(e{2}(1) + e{2}(2)) === ones(SVector{2,eltype(true+true)})
 end;
 #+end_src
 
@@ -228,9 +230,9 @@ StdUnitVector{2}(3)  # raises error
 Like bounds checking of array access, this comes with some overhead.
 However, we may want to elide such checks if we are confident that the unit vectors we construct are valid.
 Therefore, we provide "unsafe construction" of unit vectors to elide the dimensionality check.
-(Warning: doing so could lead to strange  difficult-to-debug behavior.)
+(Warning: doing so could lead to strange difficult-to-debug behavior; see below.)
 #+begin_src jupyter-julia
-StdUnitVector{2}(MM.UNSAFE, 3)
+collect(StdUnitVector{2}(MM.UNSAFE, 3))  # 3 not less than 2!
 #+end_src
 
 We can check for any overhead of the ~UNSAFE~ method to direct computation on the indices, and there seems to be none.
@@ -368,7 +370,9 @@ We leave that to later work.
 
 We can now produce an identity matrix as follows by using ~inner~, defined above, and ~StdUnitVector~.
 #+begin_src jupyter-julia
-@btime [inner(ê{3}(i), ê{3}(j)) for i ∈ 1:3, j ∈ 1:3]
+@btime [inner(e1, e2) for e1 ∈ sb, e2 ∈ sb] setup=begin
+    sb = StdBasis{3}(Real)
+end
 #+end_src
 
 However, much convenience is provided by implementing the [[https://docs.julialang.org/en/v1/manual/interfaces/][iteration and indexing interfaces]] for ~MultilinearForm~​s.
@@ -525,10 +529,6 @@ That is, we can take linear combinations of multilinear maps and generally produ
 end;
 #+end_src
 
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal[22m[39m
-: Vector Space  | [32m   8  [39m[36m    8[39m
-
 * More complex (and useful) multilinear forms
 
 ** Spherical harmonics
@@ -574,7 +574,7 @@ _issymmetric(A::AbstractArray{<:Any, 2}) =
         for formfield in (sphharm30, sphharm31, sphharm32, sphharm33)
             form = formfield(x)
             K = ndims(form)
-            D = ArrayInterface.size(form, 1)
+            D = Arr.size(form, 1)
             out = collect(form)
             @test ndims(out) == K
             @test all(==(D), size(out))

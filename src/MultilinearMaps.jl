@@ -1,7 +1,7 @@
 module MultilinearMaps
 
 
-using Base: @propagate_inbounds
+using Base: @propagate_inbounds, tail
 import Base
 using Static
 import ArrayInterface as Arr
