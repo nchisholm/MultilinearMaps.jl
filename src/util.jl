@@ -8,13 +8,13 @@ const TupleN{T,N} = NTuple{N,T}
 @inline tuplecat(t1::Tuple) = t1
 @inline tuplecat(t0::Tuple, ts::Tuple...) = (t0..., tuplecat(ts...)...)
 
-# Return the types contained in a tuple
-# fieldtypes itself is not type stable
+# Return the types contained in a tuple (fieldtypes itself is not type stable)
 @generated tupletypes(::Type{T}) where {T<:Tuple} = fieldtypes(T)
 @generated tuplecount(::Type{T}) where {T<:Tuple} = fieldcount(T)
 @inline tupletype(::Type{T}, i) where {T<:Tuple} = fieldtype(T, i)
 
 
+# NOTE: there is a function with this name in Base we could replace this with.
 @inline promote_eltype(Ts...) = promote_type(map(eltype, Ts)...)
 
 
@@ -42,16 +42,13 @@ const Safety = Union{Safe,Unsafe}
 @inline inbounds_safety() = (@boundscheck return SAFE; UNSAFE)
 
 
-# Competely static size
-const SizeS{N} = NTuple{N,StaticInt}
-# Completely dynamic size
-const SizeD{N} = NTuple{N,Int}  # === Dims{N}
 # Static or dynamic size
-const SizeSD{N} = NTuple{N,Union{<:StaticInt,Int}}
+const Size = TupleN{Union{<:StaticInt,Int}}
+# Competely static size
+const SizeS = TupleN{StaticInt}
+# Static size with all same dimensions
+const CubeSize{N,D} = NTuple{N,StaticInt{D}}
 
-
-# Replace with ArrayInterface.length if/when implemented
-@inline _length(a) = prod(Arr.size(a))
 
 """
     samesize(as...)
@@ -69,8 +66,8 @@ end
 # @inline _sizes_match(sz::Size) = true
 # @inline _sizes_match(sz::Size, a0, as...) =
 #     sz == Arr.size(a0) && _sizes_match(sz, as...)
-@inline _sizes_match(sz0::SizeSD, szs::SizeSD...) = all(==(sz0), szs)
-@inline _sizes_match(sz::SizeSD, as...) = _sizes_match(sz, map(Arr.size, as)...)
+@inline _sizes_match(sz0::Size, szs::Size...) = all(==(sz0), szs)
+@inline _sizes_match(sz::Size, as...) = _sizes_match(sz, map(Arr.size, as)...)
 
 @noinline function _throw_size_mismatch(as...)
     sizes = map(Arr.size, as)
@@ -112,6 +109,3 @@ end
 @inline operands(::Type{P}) where P        = op -> operands(P, op)
 @inline operands(::Type{P}, op::P) where P = op.operands::Tuple
 @inline operands(::Type, op)               = (op,)
-
-# Specialized cases
-@inline operands(::Type{<:ScalarMultiple}, f::ScalarMultiple) = (f.parent, f.scalar)

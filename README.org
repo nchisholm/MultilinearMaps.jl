@@ -276,7 +276,7 @@ We'll restrict our attention to the case where the vectors operated on by a give
 Thus, we represent such vectors using types from ~StaticArrays~ for efficiency.
 
 Let's define a few ~MultilinearMaps~ (in three dimensions) to work on below.
-#+begin_src jupyter-julia :results silent
+#+begin_src jupyter-julia
 const ê = StdUnitVector  # For convenience
 _just_true() = true
 const solo = MultilinearForm{0}(_just_true)
@@ -284,7 +284,7 @@ const inner = MultilinearForm{2,3}(dot)
 const skew = MultilinearForm{4,3}(_skew)
 #+end_src
 
-Check that thing work correctly.
+Check that things work correctly.
 
 #+begin_src jupyter-julia
 using Test
@@ -404,10 +404,13 @@ The identity matrix (~inner~) can now be collected into an array with a single l
 :NOTE:
 ~collect(::MultilinearMap)~ requires a hack to work to the effect of ~Base.collect(f::MultilinearMap) = Base.collect(eltype(f), f)~.  Without it, ~collect(inner)~ raises an error when it attempts to call ~similar~.
 
-#+begin_src jupyter-julia :results scalar :eval no
+#+begin_src jupyter-julia :eval no
 similar(Array{Bool}, axes(inner))  # works
 similar(1:1, Bool, axes(inner))    # broken
 #+end_src
+:RESULTS:
+# [goto error]
+:END:
 
 Since the size of each dimension is usually small and a fixed constant, we integrate with ~StaticArrays~.
 #+begin_src jupyter-julia
@@ -473,16 +476,14 @@ end
 
 #+begin_src jupyter-julia
 let
+    solo = MultilinearForm{0}(() -> 1.0)
     inner = MultilinearForm{2,3}(dot)
     skew = MultilinearForm{4,3}(_skew)
-    solo = MultilinearMap{Tuple{}}(() -> 1.0)
     @btime StaticArrays.sacollect(Scalar, $solo)
     @btime StaticArrays.sacollect(SArray, $skew)
     @btime StaticArrays.sacollect(SArray, $skew(:,:,:,:))
 end
 #+end_src
-
-Very odd quirk: if you change ~MultilinearMap{Tuple{}}~ to ~MultilinearForm{0,3} === MultilinearMap{Tuple{}}~, the /other/ benchmarks slow down.
 
 #+begin_src jupyter-julia
 let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
@@ -515,7 +516,7 @@ That is, we can take linear combinations of multilinear maps and generally produ
         # Type-level associativity (should use unequal operands)
         @test (inner + inner) + inner === inner + (inner + inner) === inner + inner + inner
         # Can't add maps of unequal sizes (should probably give a more helpful exception)
-        @test_throws MethodError inner + skew
+        @test_throws DimensionMismatch inner + skew
     end;
     @testset "Linear Combinations" begin
         @test ((inner + inner) + inner).operands === (inner + (inner + inner)).operands
@@ -771,6 +772,8 @@ end
 end
 #+end_src
 
+Note: speed depends on order of arguments ~n~ and ~f~. Loop ordering?
+
 
 ** Evaluation at multiple points
 
@@ -819,7 +822,7 @@ end
 
 *** Collection to a ~StaticArrays.Scalar~ is broken.
 
-#+begin_src jupyter-julia
+#+begin_src jupyter-julia :eval no
 @btime SArray(stokeslet(x)(e,f)) setup=begin
     x = SVector{3,Float64}(1,2,3)
     e = SVector{3,Float64}(1,1,1)

@@ -1,16 +1,17 @@
-# Represent a partially contracted form
-struct PartialMap{Sz<:Size,
-                  M<:AtomicMultilinearMap,
-                  TT<:Tuple} <: MultilinearMap{Sz}
-    parent::M
+# Represent a partially contracted form by wrapping another MultilinearMap of a
+# "larger" size.
+struct PartialMap{Sz<:Size, T,
+                  MM<:MultilinearMap{<:Size, T},
+                  TT<:Tuple} <: MultilinearMap{Sz,T}
+    parent::MM
     args::TT
-    function PartialMap(parent::AtomicMultilinearMap{<:Size{N}},
-                           args::Vararg{Union{Colon,AbstractVector}, N}
-                           ) where N
+    function PartialMap(parent::MultilinearMap{Sz, T},
+                        args::Vararg{Union{Colon,AbstractVector}}
+                        ) where {Sz<:Size, T}
         MM = typeof(parent)
-        TT = typeof(args)
-        Sz′ = _contract_size(MM, TT)
-        new{Sz′, MM, TT}(parent, args)
+        AT = typeof(args)
+        Sz′ = _contract_size(MM, AT)
+        new{Sz′, T, MM, AT}(parent, args)
     end
 end
 

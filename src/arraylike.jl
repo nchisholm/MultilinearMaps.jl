@@ -1,21 +1,26 @@
 # Act like an array
 
+@inline Base.IteratorSize(::Type{<:MultilinearMap{<:Size{N}}}) where N =
+    Base.HasShape{N}()
+
 Base.IndexStyle(::Type{<:MultilinearMap}) = IndexCartesian()
 Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
 
-@inline Base.ndims(::Type{<:MultilinearMapN{N}}) where N = N
+@inline Base.eltype(::Type{<:MultilinearMap{<:Size,T}}) where T = T
+
+# Needs to be defined if `MultilinearMap` is not an `AbstractArray` even though
+# it `HasShape{N}`
+@inline Base.ndims(::Type{<:MultilinearMap{<:Size{N}}}) where N = N
 @inline Base.ndims(f::MultilinearMap) = Base.ndims(typeof(f))
 
+# TODO: support dynamic dimensions?
 @generated Arr.axes_types(::Type{<:MultilinearMap{Sz}}) where Sz =
     Tuple{map(D -> Arr.SOneTo{known(D)}, fieldtypes(Sz))...}
 
-@generated Arr.axes(::T) where {N, T<:MultilinearMap{<:SizeS{N}}} =
+@generated Arr.axes(::T) where {N, T<:MultilinearMap{<:Size{N}}} =
     ntuple(i -> Arr.axes_types(T, i)(), Val(N))
-    # map(T -> T(), tupletypes(Arr.axes_types(T)))
 
-@generated Base.length(::Type{<:MultilinearMap{Sz}}) where {Sz} =
-    mapreduce(known, *, tupletypes(Sz))
-@inline Base.length(f::MultilinearMap) = Base.length(typeof(f))
+@inline Base.length(f::MultilinearMap) = dynamic(Arr.static_length(f))
 
 @inline Base.axes(f::MultilinearMap) = Arr.axes(f)
 
@@ -36,17 +41,10 @@ Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
 @inline _getindex(✓::Safety, f::MultilinearMapN{N}, I::CartesianIndex{N}) where N =
     _getindex(✓, f, Tuple(I)...)
 
-
 @inline Base.firstindex(f::MultilinearMap) = first(CartesianIndices(f))
 
 @inline Base.lastindex(f::MultilinearMap) = last(CartesianIndices(f))
 
-# FIXME: need eltype(::Type{MM}) where {MM<:MultilinearMap} = ...
-# Below is incorrect...
-@inline Base.eltype(f::MultilinearMap) = eltype(first(f))
-
-
-@inline Base.IteratorSize(F::Type{<:MultilinearMap}) = Base.HasShape{ndims(F)}()
 
 # NOTE inlining is important to performance here
 @inline function Base.iterate(f::MultilinearMap)
@@ -64,10 +62,14 @@ end
 end
 
 
-# XXX: hack.  For some reason plain-old collect(::MultilinearMap) doesn't work.
-# It looks like it doesn't like OptionallyStaticUnitRange
+# For some reason collect does not work for things that HasShape{N}() but are
+# not AbstractArrays.  Perhaps this is an omission in the iterator interface in
+# Base.
 Base.collect(f::MultilinearMap) = Base.collect(eltype(f), f)
 
+# Q: should similar be implemented?  Probably not; MultilinarMaps are backed by
+# a function rather than stored values, and hence inherently immutable.
+#
 # @inline Base.similar(f::MultilinearMap, ::Type{T}=eltype(f), s::Sz=size(f)) where T =
 #     Array{T, ndims(f)}(undef, s)
 #

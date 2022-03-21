@@ -232,8 +232,3 @@ function Base.show(io::IO, ::MIME"text/plain", sb::StdBasis)
           "Standard basis of a vector space {>:", T, "}^", D, ":\n",
           "  {", join(ntuple(i -> "𝐞̂_$i", Val(D)), ", "), "}")
 end
-
-
-# struct TensorProduct{T, N, VV<:NTuple{N,<:AbstractVector{T}}} <: AbstractArray{T,N}
-#     operands::VV
-# end
