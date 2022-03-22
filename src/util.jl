@@ -4,9 +4,17 @@ using Base.Cartesian
 const TupleN{T,N} = NTuple{N,T}
 
 # Concatenate ("splat") n tuples into one big tuple
-@inline tuplecat() = ()
-@inline tuplecat(t1::Tuple) = t1
-@inline tuplecat(t0::Tuple, ts::Tuple...) = (t0..., tuplecat(ts...)...)
+@inline tuplejoin(t::Tuple) = joinargs(t...)
+@inline tuplejoin_deep(t::Tuple) = joinargs_deep(t...)
+
+@inline joinargs() = ()
+@inline joinargs(a, rest...) = (a, joinargs(rest...)...)
+@inline joinargs(a::Tuple, rest...) = (a..., joinargs(rest...)...)
+
+@inline joinargs_deep() = ()
+@inline joinargs_deep(a, rest...) = (a, joinargs_deep(rest...)...)
+@inline joinargs_deep(t::Tuple, rest...) =
+    (joinargs_deep(t...)..., joinargs_deep(rest...)...)
 
 # Return the types contained in a tuple (fieldtypes itself is not type stable)
 @generated tupletypes(::Type{T}) where {T<:Tuple} = fieldtypes(T)
@@ -68,6 +76,11 @@ end
 #     sz == Arr.size(a0) && _sizes_match(sz, as...)
 @inline _sizes_match(sz0::Size, szs::Size...) = all(==(sz0), szs)
 @inline _sizes_match(sz::Size, as...) = _sizes_match(sz, map(Arr.size, as)...)
+@inline function _sizes_match(a, as...)
+    sz = Arr.size(a)
+    _sizes_match(sz, as...)
+end
+
 
 @noinline function _throw_size_mismatch(as...)
     sizes = map(Arr.size, as)
@@ -106,6 +119,16 @@ end
 
 # Produce the operands of a lazy operator
 # Generically assume instances of P have a field called operands
-@inline operands(::Type{P}) where P        = op -> operands(P, op)
-@inline operands(::Type{P}, op::P) where P = op.operands::Tuple
 @inline operands(::Type, op)               = (op,)
+@inline operands(::Type{P}) where P        = op -> operands(P, op)
+@inline operands(op::P) where P            = operands(P, op)
+
+
+# Convert digits to subscripts, superscripts
+subscript(d::Integer) = Char(0x2080) + _valid_scriptdigit(d)
+subscripts(i::Integer) = join(subscript(d) for d ∈ reverse!(digits(i)))
+
+function _valid_scriptdigit(d::Integer)
+    0 ≤ d ≤ 9 || throw(DomainError(d, "Must be a digit between 0 and 9"))
+    return d
+end

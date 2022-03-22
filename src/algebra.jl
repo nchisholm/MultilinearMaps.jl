@@ -6,7 +6,11 @@
 # map.  Here, we define the necessary operations `ScalarMultiple` and `Sum`.
 #
 # TODO: tensor products, contractions?
-#
+
+
+# Comparison
+Base.:(==)(f1::MultilinearMap, f2::MultilinearMap) =
+    _sizes_match(f1, f2) && all(elem1 == elem2 for (elem1, elem2) ∈ zip(f1, f2))
 
 
 """
@@ -50,20 +54,19 @@ common size.
 """
 struct Sum{Sz<:Size, T, MMs<:TupleN{MultilinearMap{Sz}}} <: MultilinearMap{Sz,T}
     operands::MMs
-    function Sum(fs::Vararg{MultilinearMap})
+    function Sum(fs::Vararg{MultilinearMap})  # need forced specialization?
         sz = samesize(fs...)
         args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
         T = typeof(_eval_sum(fs, args1))                 # determine output type
         new{typeof(sz), T, typeof(fs)}(fs)
     end
 end
-@inline Sum(f::MultilinearMap, fsum::Sum) = Sum(f, fsum.operands...)
-@inline Sum(fsum::Sum, f::MultilinearMap) = Sum(fsum.operands..., f)
 
 @inline _eval_sum(operands::TupleN{MultilinearMap{<:Size}},
                   args::TupleN{VecOrColon}) =
     mapreduce(apply(args), +, operands)
 
+@inline operands(::Type{<:Sum}, sumf::Sum) = sumf.operands
 
 # Evaluation
 @inline (sumf::Sum)(args::Vararg{VecOrColon,N}) where N =
@@ -71,12 +74,12 @@ end
 # XXX slow.  Try forcing specialization on argument length
 
 @inline Base.:-(f::MultilinearMap) = -one(eltype(f)) * f
-@inline Base.:+(f1::MultilinearMap, f2::MultilinearMap) = Sum(f1, f2)
+@inline Base.:+(fs::MultilinearMap...) = Sum(fs...)  # denest?
 @inline Base.:-(f1::MultilinearMap, f2::MultilinearMap) = f1 + -(f2)
 
 
 function Base.show(io::IO, fsum::Sum)
-    print(io, join(fsum.operands, " + "))
+    print(io, "(", join(fsum.operands, " + "), ")")
 end
 
 
