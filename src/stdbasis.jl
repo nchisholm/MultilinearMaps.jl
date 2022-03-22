@@ -152,6 +152,37 @@ Represent a `D`-dimensional basis for a vector space over a field of type `T`.
 """
 abstract type Basis{D,T} end
 
+# Made of three vectors that span the vector space for which
+#     det([ 𝐞₁  𝐞₂  ⋯  𝐞ₙ ]) ≠ 0
+# but are otherwise arbitrary.
+struct GeneralBasis{D,T,L #= D*D =#} <: Basis{D,T}
+    data::NTuple{L,T}  # Some representation of a statically-sized matrix
+    GeneralBasis(::Unsafe, ::Tuple) = error("Not implemented.")
+    # UNSAFE because basis vectors should be checked if they span
+    # whatever field (e.g. ℝᴰ) that the vector space is over.
+end
+
+# Dual basis, so we can enforce invariance under changes of basis / coordinate
+# system.
+struct Dual{D,T,B<:Basis,L #= D*D =#} <: Basis{D,T}
+    parent::B
+    data::NTuple{L,T}
+    Dual(::Basis) = error("Not implemented")
+    # Also needs some method to compute the dual basis, possibly at the same as
+    # constructuion so they can be linked.  The rows of the inverse transpose of
+    # the column-wise matrix of vectors formed by the original basis is the dual
+    # basis.
+    #     Dual(b::GeneralBasis) = new{...}(b, inv(matrix(::GeneralBasis))')
+end
+
+# Some algorithms can probably be made more efficient if we know that a given
+# basis is orthonormal (ON).
+struct ONBasis{D,T,L #= D*D =#}
+    data::NTuple{L,T}
+    GeneralBasis(::Unsafe, ::Tuple) = error("Not implemented.")
+    # Unsafe in that the caller must guarantee that the basis is actually
+    # orthonormal
+end
 
 """
     StdBasis{D,T}()
