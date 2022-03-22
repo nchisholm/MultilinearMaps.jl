@@ -65,7 +65,7 @@ end
 # For some reason collect does not work for things that HasShape{N}() but are
 # not AbstractArrays.  Perhaps this is an omission in the iterator interface in
 # Base.
-Base.collect(f::MultilinearMap) = Base.collect(eltype(f), f)
+# Base.collect(f::MultilinearMap) = Base.collect(eltype(f), f)
 
 # Q: should similar be implemented?  Probably not; MultilinarMaps are backed by
 # a function rather than stored values, and hence inherently immutable.
@@ -75,47 +75,3 @@ Base.collect(f::MultilinearMap) = Base.collect(eltype(f), f)
 #
 # @inline Base.similar(f::MultilinearMap, s::Sz) =
 #     Array{eltype(f), ndims(f)}(undef, s)
-
-
-# `_SA` triats
-
-@inline _SA.Size(::Type{MM}) where {MM<:MultilinearMap} =
-    _SA.Size(Arr.known_size(MM))
-@inline _SA.Size(::MM) where {MM<:MultilinearMap} =
-    _SA.Size(MM)
-
-@inline _SA.Length(::Type{MM}) where {MM<:MultilinearMap} =
-    _SA.Length(Arr.known_length(MM))
-@inline _SA.Length(::MM) where {MM<:MultilinearMap} =
-    _SA.Length(MM)
-# @inline _SA.Length(f::MultilinearForm) = _SA.Length(typeof(f))
-
-_SA.similar_type(MM::Type{<:MultilinearMap},
-                          ElType::Type,
-                          S::_SA.Size = _SA.Size(MM)) =
-    _SA.similar_type(StaticArray, ElType, S)
-
-_SA.similar_type(f::MultilinearMap,
-                          ElType::Type = eltype(f),
-                          S::_SA.Size = _SA.Size(f)) =
-    _SA.similar_type(StaticArray, ElType, S)
-
-_SA.similar_type(f::MultilinearMap, S::_SA.Size) =
-    _SA.similar_type(StaticArray, eltype(f), S)
-
-# XXX AHOY MATIES! We be type pirates XXX
-# Also, this appears to have a small runtime cost, perhaps to compute `eltype(sized_gen)`
-@inline function _SA.sacollect(::Type{SA}, sized_gen) where {SA<:StaticArray}
-    SA′ = similar_type(SA, eltype(sized_gen), _SA.Size(sized_gen))
-    return sacollect(SA′, sized_gen)
-end
-
-# Allow to collect MultilinearForms as `SArray(mf)`, `MArray(mf)`, etc.
-@inline (::Type{SA})(f::MultilinearMap) where {SA<:StaticArray} =
-    sacollect(SA, f)
-
-# NOTE it would be nice if ~sacollect~ had a generic method that could
-# handle iterators that possessed a ~Size~ trait without having to specify the
-# size in the type ~SA~.  We have hacked that together above, but maybe
-# something like this should be considered for inclusion in ~_SA~
-# itself.

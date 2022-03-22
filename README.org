@@ -398,19 +398,8 @@ Note that when ~@inbounds~ is used, unit vectors are unsafely constructed, witho
 
 The identity matrix (~inner~) can now be collected into an array with a single line of code.
 #+begin_src jupyter-julia
-@btime collect(inner)  # XXX: performance overhead
+materialize(Array{Float32}, skew);
 #+end_src
-
-:NOTE:
-~collect(::MultilinearMap)~ requires a hack to work to the effect of ~Base.collect(f::MultilinearMap) = Base.collect(eltype(f), f)~.  Without it, ~collect(inner)~ raises an error when it attempts to call ~similar~.
-
-#+begin_src jupyter-julia :eval no
-similar(Array{Bool}, axes(inner))  # works
-similar(1:1, Bool, axes(inner))    # broken
-#+end_src
-:RESULTS:
-# [goto error]
-:END:
 
 Since the size of each dimension is usually small and a fixed constant, we integrate with ~StaticArrays~.
 #+begin_src jupyter-julia
@@ -419,13 +408,6 @@ Since the size of each dimension is usually small and a fixed constant, we integ
     @test StaticArrays.Length(skew) == StaticArrays.Length(3^4)
     @test StaticArrays.Size(inner) == StaticArrays.Size(3,3)
     @test StaticArrays.Size(skew) == StaticArrays.Size(3,3,3,3)
-end;
-#+end_src
-
-#+begin_src jupyter-julia
-let
-    @btime sacollect(SArray, skew)
-    @btime sacollect(MArray, skew)
 end;
 #+end_src
 
@@ -445,31 +427,10 @@ Note that components of the tensor the user has not asked for are never computed
 
 *** Materialization
 
-Let's make functions for dumping components into an arbitrary container.
-#+begin_src jupyter-julia :results silent
-using Base.Cartesian
-using StaticArrays: same_size
-
-function components!(tgt::AbstractArray, f::MultilinearMap)
-    same_size(tgt, f)
-    _unsafe_fill_components!(tgt, f)
-end
-
-@generated function _unsafe_fill_components!(tgt::AbstractArray, f::MultilinearMap)
-    # @inbounds this when ready to make this not safe
-    K = ndims(f)
-    quote
-        @nloops $K i tgt begin
-            @inbounds (@nref $K tgt i) = (@nref $K f i)
-        end
-        tgt
-    end
-end
-#+end_src
+Create an array of type ~T~ filled with the components of ~f~.
 
 #+begin_src jupyter-julia
-# XXX Performance regression
-@btime components!(A, skew) setup=(A = MArray{NTuple{4,3},Int64}(undef))
+@btime materialize!(A, skew) setup=(A = MArray{NTuple{4,3},Int64}(undef));
 #+end_src
 
 ** Validity & Performance Checks
@@ -479,10 +440,10 @@ let
     solo = MultilinearForm{0}(() -> 1.0)
     inner = MultilinearForm{2,3}(dot)
     skew = MultilinearForm{4,3}(_skew)
-    @btime StaticArrays.sacollect(Scalar, $solo)
-    @btime StaticArrays.sacollect(SArray, $skew)
-    @btime StaticArrays.sacollect(SArray, $skew(:,:,:,:))
-end
+    @btime Scalar($solo)
+    @btime SMatrix($inner)
+    @btime SArray($skew#=(:,:,:,:)=#)
+end;
 #+end_src
 
 #+begin_src jupyter-julia
@@ -494,38 +455,37 @@ let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
 end
 #+end_src
 
-** Known issues
-
-For some reason, type aliases of ~SArray~ like ~SMatrix~ don't work.
-#+begin_src jupyter-julia :eval no
-SMatrix(inner)  # FIXME: this makes to do but is broken.
-#+end_src
 
 * Linear Combinations of Multilinear Maps
 
 Multilinear maps form a vector space.
 That is, we can take linear combinations of multilinear maps and generally produce another multilinear map.
 
+** Tests
+
 #+begin_src jupyter-julia :results scalar
 @testset "Vector Space" begin
-    @testset "ScalarMultiple" begin
-        @test 0.5 * inner == inner / 2 == MM.ScalarMultiple(inner, 0.5)
-        @test inner // 2 == 1//2 * inner == MM.ScalarMultiple(inner, 1//2)
+    @testset "Equality" begin
+        @test inner == inner
+        @test inner != skew
+        @test skew != inner
+    end
+    @testset "Scalar Multiples" begin
+        @test MM.ScalarMultiple(inner, 0.5) == 0.5 * inner == inner / 2
+        @test inner !== inner / 2
+        @test MM.ScalarMultiple(inner, 1//2) == inner // 2 == 1//2 * inner
     end
     @testset "Sums" begin
-        # Type-level associativity (should use unequal operands)
-        @test (inner + inner) + inner === inner + (inner + inner) === inner + inner + inner
+        # Associativity
+        @test (inner + inner) + inner == inner + (inner + inner) == inner + inner + inner
         # Can't add maps of unequal sizes (should probably give a more helpful exception)
         @test_throws DimensionMismatch inner + skew
     end;
     @testset "Linear Combinations" begin
-        @test ((inner + inner) + inner).operands === (inner + (inner + inner)).operands
-        @test all(==(0), collect(skew - skew))
-        @test collect(inner + inner) == collect(2 * inner)
-        @test collect(inner + inner + inner) ==
-            collect(2*inner + inner) ==
-            collect(inner + 2*inner) ==
-            collect(3*inner)
+        @test all(==(0), skew - skew)
+        @test inner + inner == 2 * inner
+        @test inner + inner + inner == 2*inner + inner == inner + 2*inner == 3*inner
+        @test 2*(skew + skew) / 2 == 2*skew
     end
 end;
 #+end_src
@@ -576,25 +536,26 @@ _issymmetric(A::AbstractArray{<:Any, 2}) =
             form = formfield(x)
             K = ndims(form)
             D = Arr.size(form, 1)
-            out = collect(form)
+            out = SArray(form)
             @test ndims(out) == K
             @test all(==(D), size(out))
             @test istraceless(out)
         end
     end
     @testset "Symmetric" begin
-        @test issymmetric(collect(sphharm32(x)))
+        @test issymmetric(SArray(sphharm32(x)))
         for i ∈ 1:3
-            @test _issymmetric(collect(sphharm33(x)(:,:, ê(i))))
-            @test _issymmetric(collect(sphharm33(x)(:, ê(i), :)))
+            @test _issymmetric(SArray(sphharm33(x)(:,:, ê(i))))
+            @test _issymmetric(SArray(sphharm33(x)(:, ê(i), :)))
             # Needed? I think implied by the previous two
-            @test _issymmetric(collect(sphharm33(x)(ê(i), :, :)))
+            @test _issymmetric(SArray(sphharm33(x)(ê(i), :, :)))
         end
     end
 end;
 #+end_src
 
 Lets check the performance of these functions.
+
 #+begin_src jupyter-julia
 using BenchmarkTools, StaticArrays
 
@@ -647,7 +608,7 @@ How about the all-important (to me) Stokeslet tensor \(S\) in three dimensions? 
 where \(\vec x\) is the position vector and \(r = |\vec x|\).
 We can also write the Stokeslet at each point as a multilinear function
 \[ 8π \left. S(\uvec e, \vec f) \right|_{x} = \frac{\uvec e ⋅ \vec f}{r} + \frac{(\uvec e ⋅ \vec x)(\vec f ⋅ \vec x)}{r^3}, \]
-where \(\uvec e\) is a unit vector (in an arbirary direction) representing the direction of the flow speed that is computed and \(f\) is the point force at the origin.
+where \(\uvec e\) is a unit vector (in an arbitrary direction) representing the direction of the flow speed that is computed and \(f\) is the point force at the origin.
 
 Thus, we can get the \(ij\)-th component as \(S_{ij}(x) = \left. S(\hat{\vec e}_i, \hat{\vec e}_j) \right|_{x}\).
 
@@ -667,7 +628,7 @@ function stokeslet(x)
     # Now make it a second order multilinear form in three dimensions
     return MultilinearForm{2,3}(_stokeslet)
 end
-@benchmark SArray(stokeslet(x)) setup=(x=SVector{3,Float64}(1.,2,3))
+@btime SArray(stokeslet(x)) setup=(x=SVector{3,Float64}(1.,2,3))
 #+end_src
 
 We are left with a matrix of the components of our favorite (symmetric) tensor.
@@ -682,8 +643,8 @@ end
 #+begin_src jupyter-julia
 let x = normalize(rand(SVector{3}))
     f = normalize(rand(SVector{3}))
-    stokeslet(x)(:,f)                        |> showit ∘ SArray
-    (stokeslet(x) + (-1)*stokeslet(x))(:,f)  |> showit ∘ SArray
+    stokeslet(x)(:,f)                   |> showit ∘ SArray
+    (stokeslet(x) - stokeslet(x))(:,f)  |> showit ∘ SArray
 end
 #+end_src
 
@@ -691,7 +652,7 @@ If we use a ~StdUnitVector~ as one of the vectors, we should get the correspondi
 #+begin_src jupyter-julia
 @btime SArray(stokeslet(x)(:,f)) setup=begin
     x = SVector{3,Float64}(1,2,3)
-    f = ê{3}(2)
+    f = ê{3}(2)  # take second row/col
 end
 #+end_src
 
@@ -784,8 +745,8 @@ let n = 10000
     xs_grid = (SVector{3,Float64}(x,y,0) for x in LinRange(-1, 1, 100), y in LinRange(-1, 1, 100))
     fs = rand(SVector{3,Float64}, n)
 
-    ElT_mat = similar_type(stokeslet(first(xs)))
-    ElT_vec = similar_type(stokeslet(first(xs))(:, first(fs)))
+    ElT_mat = typeof(SArray(stokeslet(first(xs))))
+    ElT_vec = typeof(SArray(stokeslet(first(xs))(:, first(fs))))
     buf_mat = Vector{ElT_mat}(undef, n)
     buf_vec = Vector{ElT_vec}(undef, n)
     # buf = @btime Vector{$ElT}(undef, $n)  # alloc time is ~500-600ns
@@ -809,24 +770,29 @@ let x⃗s = (SVector(x, y, 0.) for x ∈ LinRange(-3, 3, 201), y ∈ LinRange(-3
     f⃗ = StdUnitVector{3}(1)  # = 𝐞̂ₓ
     n⃗ = StdUnitVector{3}(2)  # = 𝐞̂ₓ
     x⃗ = first(x⃗s)
-    # @btime SArray(stokeslet($(Ref(x⃗))[])(:, $(Ref(f⃗))[]))
-    # @btime map(x⃗ -> SArray(stokeslet(x⃗)(:, $f⃗)), $x⃗s)
+
+    materialize(Point3f, stresslet(first(x⃗s))(:,n⃗,f⃗))[SOneTo(2)]
 
     # Makie needs a function in a rather speficic format.
-    on_xy_plane(form, args) = x -> Point2f(SArray(form(SVector(x..., 0.))(args...))[SOneTo(2)])
+    on_xy_plane(form, args) = x -> let x2 = SVector(x[1], x[2], 0.)
+        materialize(Point3f, form(x2)(args...))[SOneTo(2)]
+    end
+
     streamplot(on_xy_plane(stresslet, (:,n⃗,f⃗)), -3..3, -2..2, axis=(;aspect=DataAspect()))
 end
 #+end_src
 
 ** Known issues
 
-*** Collection to a ~StaticArrays.Scalar~ is broken.
+*** Materialization of fully contracted case
 
-#+begin_src jupyter-julia :eval no
-@btime SArray(stokeslet(x)(e,f)) setup=begin
-    x = SVector{3,Float64}(1,2,3)
+#+begin_src jupyter-julia
+let x = SVector{3,Float64}(1,2,3)
     e = SVector{3,Float64}(1,1,1)
     f = SVector{3,Float64}(3,2,1)
+    stokeslet(x)(e,f)              # Produces a Float64 (not iterable)!
+    # SArray(stokeslet(x)(e,f))      # so this doesn't work
+    Scalar(stokeslet(x)(e,f))      # but this does.
 end
 #+end_src
 
@@ -838,25 +804,29 @@ end
 #+begin_src jupyter-julia
 reflect(x::SVector{3}) = SVector{3}(x[1], -x[2], x[3])
 
-let # y⃗s = [SVector(x,y,0.) for x ∈ LinRange(-3, 3, 201), y ∈ LinRange(0, 3, 101)]
+let
     y⃗ = SVector(0., 1, 0)
     f = normalize(SVector(1., 1., 0))
-    f_refl = reflect(f)
+    # f_refl = reflect(f)
     # ê = StdUnitVector{3}
-    function stokeslet_nostress(x, y)
+    function stokeslet_nostress(x, y, f)::MultilinearMap
         y_img = reflect(y)
-        SArray(stokeslet(x - y)(:, f)) + SArray(stokeslet(x - y_img)(:, f_refl))
+        stokeslet(x - y)(:, f) + stokeslet(x - reflect(y))(:, reflect(f))
     end
-    stokeslet_nostress(SVector(0,0,0), SVector(1,0,0))
-    on_xy_plane(x) = Point2f(stokeslet_nostress(SVector(x[1], x[2], 0.), y⃗)[SOneTo(2)])
-    streamplot(on_xy_plane, -3..3, -2..2, axis=(;aspect=DataAspect()))
+
+    velfield(x2) = let x⃗ = SVector(x2[1], x2[2], 0.)
+        materialize(Point3f, stokeslet_nostress(x⃗, y⃗, f))[SOneTo(2)]
+    end
+
+    (fig,ax,p) = streamplot(velfield, -3..3, -2..2, axis=(;aspect=DataAspect()))
+    hlines!(ax, 0; color=:black)
+    display(fig)
 end
 #+end_src
 
 * Directions for future development
 
 ** Generalization to multilinear maps
-- May need to attach vector spaces to vectors in some new type.  The multilinear map would contain as a property the vector space for each vector argument.  The vector space itself would consist of a basis and dual basis.
 - During collection to an array, shape would have to be explicitly specified
 - Specific shapes can be specified in a subtype
 
