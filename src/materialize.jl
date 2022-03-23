@@ -16,6 +16,7 @@ materialize!(tgt::AbstractArray, f::MultilinearMap) =
                                          f::MultilinearMap{<:Size{N}}) where N
     quote
         @nloops $N i tgt begin
+            # tgt[i,j,k,...] = f[i,j,k,...]
             @inbounds (@nref $N tgt i) = (@nref $N f i)
         end
         tgt
@@ -42,8 +43,11 @@ empty_target(AA::Type{<:AbstractArray}, f::MultilinearMap) =
 
 # Support `StaticArray`s
 
-@inline materialize(SA::Type{<:StaticArray}, f::MultilinearMap) =
-    (samesize(SA, f); sacollect(target_type(SA, f), f))
+@inline function materialize(SA::Type{<:StaticArray}, f::MultilinearMap)
+    SA′ = target_type(SA, f)
+    samesize(SA′, f)
+    sacollect(SA′, f)
+end
 
 # target_type(SA::Type{<:StaticArray{SA_Sz, T}}, ::MultilinearMap) where {SA_Sz<:Tuple, T} =
 #     similar_type(SA, T, _SA.Size(SA_Sz))
@@ -52,7 +56,9 @@ empty_target(AA::Type{<:AbstractArray}, f::MultilinearMap) =
 #     similar_type(SA, T, _SA.Size(Base.size(f)))  # XXX slow
 
 target_type(SA::Type{<:StaticArray{SA_Sz}}, f::MultilinearMap) where {SA_Sz<:Tuple} =
-    similar_type(SA, eltype(f), _SA.Size(SA_Sz))
+    @isdefined(SA_Sz) ? similar_type(SA, eltype(f), _SA.Size(SA_Sz)) :
+        _SA.missing_size_error(SA)
+        # similar_type(Union{SA,StaticArray}, eltype(f), _SA.Size(f))
 
 target_type(SA::Type{<:StaticArray}, f::MultilinearMap) =
     similar_type(SA, eltype(f), _SA.Size(f))

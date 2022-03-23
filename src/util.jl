@@ -66,24 +66,29 @@ Return the size of `as` if they all compare equal (==).  Otherwise throw a
 considered.)
 """
 @inline function samesize(as...)
-    sz = Arr.size(first(as))
+    sz = _size(first(as))
     _sizes_match(sz, tail(as)...) || _throw_size_mismatch(as...)
     return sz
 end
 
-# @inline _sizes_match(sz::Size) = true
-# @inline _sizes_match(sz::Size, a0, as...) =
-#     sz == Arr.size(a0) && _sizes_match(sz, as...)
 @inline _sizes_match(sz0::Size, szs::Size...) = all(==(sz0), szs)
-@inline _sizes_match(sz::Size, as...) = _sizes_match(sz, map(Arr.size, as)...)
+@inline _sizes_match(sz::Size, as...) = _sizes_match(sz, map(_size, as)...)
 @inline function _sizes_match(a, as...)
-    sz = Arr.size(a)
+    sz = _size(a)
     _sizes_match(sz, as...)
 end
 
+@inline _size(T::Type) = _determinant_size(T)
+@inline _size(a) = Arr.size(a)
+
+@inline _determinant_size(A) = _determinant_size(Arr.known_size(A))
+@inline _determinant_size(sz::TupleN{Int}) = static(sz)
+@noinline _determinant_size(sz::TupleN{Union{Int,Nothing}}) = throw(error(
+    "Indeterminant size of type with known size $sz."
+))
 
 @noinline function _throw_size_mismatch(as...)
-    sizes = map(Arr.size, as)
+    sizes = map(dynamic ∘ _size, as)
     throw(DimensionMismatch("Sizes $sizes of inputs do not match"))
 end
 

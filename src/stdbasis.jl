@@ -2,7 +2,7 @@ using LinearAlgebra
 import LinearAlgebra: dot
 # using StaticArrays: StaticVector, StaticMatrix
 
-export StdUnitVector, StdBasis
+export StdUnitVector, StdBasis, ⊗
 
 """
     StdUnitVector{D,T}([::Safety=Safe,] d::Int)
@@ -152,6 +152,11 @@ Represent a `D`-dimensional basis for a vector space over a field of type `T`.
 """
 abstract type Basis{D,T} end
 
+@inline Base.length(::Basis{D}) where D = D
+@inline field(::Basis{<:Any, T}) where T = T
+@inline Base.firstindex(::Basis) = 1
+@inline Base.lastindex(sb::Basis) = length(sb)
+
 # Made of three vectors that span the vector space for which
 #     det([ 𝐞₁  𝐞₂  ⋯  𝐞ₙ ]) ≠ 0
 # but are otherwise arbitrary.
@@ -223,11 +228,7 @@ end
 #
 # @inline Base.axes(sb::StdBasis) = Arr.axes(sb::StdBasis)
 
-@inline Base.length(::StdBasis{D}) where D = D
 # @inline Base.size(sb::StdBasis, dim...) = dynamic(Arr.size(sb, dim...))
-
-@inline Base.firstindex(::StdBasis) = 1
-@inline Base.lastindex(sb::StdBasis) = length(sb)
 
 @inline _getindex(✓::Safety, sb::StdBasis, i::Int) = eltype(sb)(✓, i)
 
@@ -255,11 +256,73 @@ Base.Tuple(sb::StdBasis{D}) where D = NTuple{3}(sb)
 # @inline Base.view(sb::StdBasis, I::Vararg{Union{Colon,Int}}) =
 #     Base.getindex(sb, I...)
 
-Base.show(io::IO, sb::StdBasis) = print(io, typeof(sb), "()")
+Base.show(io::IO, sb::StdBasis) =
+    print(io, Union{typeof(sb), StdBasis}, "{", length(sb), "}",
+          "(", field(sb), ")")
 function Base.show(io::IO, ::MIME"text/plain", sb::StdBasis)
     D = length(sb)
     T = eltype(eltype(sb))
     print(io,
-          "Standard basis of a vector space {>:", T, "}^", D, ":\n",
-          "  {", join(ntuple(i -> "𝐞̂_$i", Val(D)), ", "), "}")
+          "Standard basis of a vector space {<:", T, "}^", D, ":\n",
+          "  {", join(ntuple(i -> "𝐞̂$(subscripts(i))", Val(D)), ", "), "}")
+end
+
+
+"""
+Lazy representation of a tensor product of vectors.
+"""
+struct TensorProduct{T, N, VV<:NTuple{N,AbstractVector}} <: AbstractArray{T,N}
+    operands::VV
+
+    function TensorProduct(vs::Vararg{Union{AbstractVector,TensorProduct}})
+        # sz = map(Arr.static_length, vs)
+        vs♭ = tuplejoin_deep(map(operands(TensorProduct), vs))
+        new{promote_eltype(vs♭...), length(vs♭), typeof(vs♭)}(vs♭)
+    end
+end
+
+⊗(vs::Union{AbstractVector, TensorProduct}...) = TensorProduct(vs...)
+
+# Array Interface
+
+Base.IndexStyle(::Type{<:TensorProduct}) = IndexCartesian()
+
+@generated Arr.axes_types(::Type{<:TensorProduct{<:Any,N,VV}}) where {N,VV} =
+    Tuple{ntuple(i -> Arr.axes_types(fieldtype(VV, i), static(1)), Val(N))...}
+
+@inline Arr.axes(vv::TensorProduct) =
+    map(operand -> Arr.axes(operand, static(1)), vv.operands)
+
+@inline Base.axes(vv::TensorProduct) = Arr.axes(vv::TensorProduct)
+
+@inline Base.size(vv::TensorProduct) = dynamic(Arr.size(vv))
+
+@inline function Base.getindex(vv::TensorProduct, I::Vararg{Int,N}) where N
+    @boundscheck checkbounds(vv, I...)
+    ops = vv.operands
+    prod(ntuple(i -> ops[i][I[i]], Val(ndims(vv))))
+end
+
+Base.show(io::IO, vv::TensorProduct) =
+    print(io, "TensorProduct{", eltype(vv), ", ", ndims(vv), "}",
+          "(", join(vv.operands, ", ") , ")")
+
+Base.show(io::IO, ::MIME"text/plain", vv::TensorProduct) =
+    print(io, join(size(vv), "×"), " ",
+          "TensorProduct{", eltype(vv), ", ", ndims(vv) ,"}:\n  ",
+          join(vv.operands, " ⊗ "))
+
+
+struct TensorProductBasis{D, T, BB<:TupleN{Basis}} <: Basis{D, T}
+    bases::BB
+    function TensorProductBasis(bases::Vararg{Basis})
+        D = mapreduce(length, *, bases)
+        T = promote_type(map(field, bases)...)
+        new{D, T, typeof(bases)}(bases)
+    end
+end
+
+function Base.show(io::IO, bb::TensorProductBasis)
+    print(io, Union{typeof(bb), TensorProductBasis},
+          "{", length(bb), ",", field(bb), "}", bb.bases)
 end

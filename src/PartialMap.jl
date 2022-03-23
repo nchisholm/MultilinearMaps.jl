@@ -11,7 +11,8 @@ struct PartialMap{Sz<:Size, T,
         MM = typeof(parent)
         AT = typeof(args)
         Sz′ = _contract_size(MM, AT)
-        new{Sz′, T, MM, AT}(parent, args)
+        # FIXME: compute new output type
+        new{Sz′, T #=XXX wrong=#, MM, AT}(parent, args)
     end
 end
 
