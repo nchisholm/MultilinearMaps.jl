@@ -22,7 +22,6 @@ struct ScalarMultiple{Sz<:Size, T, MM<:MultilinearMap{Sz}, S<:Number} <: Multili
     parent::MM
     scalar::S
     ScalarMultiple(f::MultilinearMap{Sz,T}, s::S) where {Sz<:Size, T, S<:Number} =
-        # TODO: promote type...
         new{Sz, promote_type(T, S), typeof(f), S}(f, s)
 end
 

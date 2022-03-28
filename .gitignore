@@ -2,3 +2,4 @@ Manifest.toml
 /.ob-jupyter/
 *.html
 *.pdf
+/dev/

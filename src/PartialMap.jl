@@ -1,40 +1,35 @@
 # Represent a partially contracted form by wrapping another MultilinearMap of a
 # "larger" size.
 struct PartialMap{Sz<:Size, T,
-                  MM<:MultilinearMap{<:Size, T},
-                  TT<:Tuple} <: MultilinearMap{Sz,T}
+                  MM<:MultilinearMap{<:Size},
+                  TT<:Tuple} <: MultilinearMap{Sz, T}
     parent::MM
     args::TT
-    function PartialMap(parent::MultilinearMap{Sz, T},
-                        args::Vararg{Union{Colon,AbstractVector}}
-                        ) where {Sz<:Size, T}
-        MM = typeof(parent)
-        AT = typeof(args)
-        Sz′ = _contract_size(MM, AT)
-        # FIXME: compute new output type
-        new{Sz′, T #=XXX wrong=#, MM, AT}(parent, args)
+    function PartialMap(parent::MultilinearMap, args0::Vararg{VecOrColon})
+        sz = _appliedsize(parent, args0)
+        args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
+        T = typeof(parent(_parentargs(args0, args1)...))
+        new{typeof(sz), T, typeof(parent), typeof(args0)}(parent, args0)
     end
 end
 
-@generated function _contract_size(::Type{MM}, ::Type{ArgsType}) where {MM<:MultilinearMap, ArgsType<:Tuple}
-    Sz = Arr.known_size(MM)
-    ArgTs = fieldtypes(ArgsType)
-    @assert length(Sz) == length(ArgTs)
-    Tuple{[StaticInt{dimlen} for (dimlen, ArgT) ∈ zip(Sz, ArgTs) if ArgT === Colon]...}
-end
+# Returns the size of `parent(args...)`
+@inline _appliedsize(parent::MultilinearMap, args::Tuple) =
+    _appliedsize(Arr.size(parent), args)
+@inline _appliedsize(::Tuple{}, ::Tuple{}) = ()
+@inline _appliedsize((dim, sz...)::Size{N}, (arg, args...)::NTuple{N,Any}) where N =
+    arg isa Colon ? (dim, _appliedsize(sz, args)...) : _appliedsize(sz, args)
 
-# Use @_inline_meta?
-@generated function (f::PartialMap{<:Size{N}})(vs::Vararg{AbstractVector, N}) where N
-    # We need to intercalate the "concrete" parent arguments with the "free
-    # arguments" of the contracted form.
-    #
-    # Here, we let "vs" be the free arguments and "us" be the parent arguments.
-    parent_argTs = fieldtypes(fieldtype(f, :args))
-    j = 0
-    vs′ = [parent_argTs[i] === Colon ? :(vs[$(j += 1)]) : :(f.args[$i])
-           for i ∈ eachindex(parent_argTs)]
-    return :(f.parent.impl($(vs′...)))
-end
+# Returns the the full set of arguments to be passed to the *parent* of a
+# `PartialMap` when the `PartialMap` is applied to `args`.
+@inline _parentargs(::Tuple{}, ::Tuple{}) = ()
+@noinline _parentargs(::Tuple{}, args::Tuple) = error("Internal error. Please report this result as a bug.")
+@inline _parentargs((_, fixedargs...)::Tuple{Colon, Vararg}, (arg, args...)::Tuple) =
+    (arg, _parentargs(fixedargs, args)...)
+@inline _parentargs((arg, fixedargs...)::Tuple, args::Tuple) =
+    (arg, _parentargs(fixedargs, args)...)
+@inline (f::PartialMap{<:Size{N}})(vs::Vararg{VecOrColon,N}) where N =
+    f.parent(_parentargs(f.args, vs)...)
 
 function Base.show(io::IO, f::PartialMap)
     pp_args = "(" * join(map(arg -> arg isa Colon ? ":" : arg, f.args), ", ") * ")"

@@ -323,7 +323,7 @@ let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
 end
 #+end_src
 
-** Contraction
+** Partial application (contraction)
 
 We can think of a ~MultilinearMap~ applied to only ~N~ of its ~K~ arguments as a similar multilinear map of order ~K-N~.
 We call such a multilinear form "contracted", which is implemented by ~ContractedMultilinearForm~.
@@ -332,28 +332,28 @@ When a ~MultilinearForm~ is ~collect~​ed into an array, the ~:~ indicates slot
 
 #+begin_src jupyter-julia :results scalar
 let basis = StdBasis{3}(Real)
-    e2 = basis[2]
-    x = inner(:, e2)
+    e1 = basis[1]
+    v = SVector(1,2,3)
+    x = inner(v, :)
     [x(e) for e ∈ basis]
 end
 #+end_src
 
-
 Some tests:
 
 #+begin_src jupyter-julia
-@testset "Multilinear Form -> Contracted Form" begin
+@testset "PartialMap" begin
     let
-        u = StdUnitVector{2}(1) # SVector(1., 0.)
-        v = StdUnitVector{2}(2) # SVector(0., 1.)
+        e = StdUnitVector{2}(1)
         inner = @inferred MultilinearForm{2,2}(dot)
         @test_throws MethodError inner(:,:,:)
         @test_throws MethodError inner(:)
         @test inner(:,:) === inner
-        @inferred inner(u,:)
-        @test 1 == inner(u,u) == @inferred inner(u,:)(u) == @inferred inner(:,u)(u)
+        @inferred inner(e,:)
+        @test inner(:,e) == inner(e,:)
     end
-    let (u,v,w,x) = ntuple(_ -> rand(SVector{3,Float64}), Val(4))
+    let e = StdBasis{3}(Real)
+        (u,v,w,x) = ntuple(_ -> rand(SVector{3,Float64}), Val(4))
         inner = @inferred MultilinearForm{2,3}(dot)
         skew = @inferred MultilinearForm{4,3}(_skew)
         @inferred skew(u,v,w,:)
@@ -361,6 +361,9 @@ Some tests:
         @test inner(u,v) == inner(u,:)(v) == inner(:,u)(v) == inner(:,:)(u,v)
         @test skew(u,v,w,x) ≈ skew(u,v,w,:)(x) ≈ skew(u,v,:,:)(w,x) ≈
             skew(u,:,:,:)(v,w,x) ≈ skew(:,v,w,x)(u)
+        @test eltype(inner(e[1], :)) == eltype(e[1])
+        @test eltype(inner(u, :)) == eltype(u)
+        @test eltype(skew(e[1], e[2], :, e[3])) == Int
     end
 end;
 #+end_src
@@ -401,9 +404,8 @@ Note that when ~@inbounds~ is used, unit vectors are unsafely constructed, witho
 
 The identity matrix (~inner~) can now be collected into an array with a single line of code.
 #+begin_src jupyter-julia :results scalar
-@btime materialize(SArray, Bool, inner)
-@btime materialize(SMatrix{3,3}, Bool, inner)
-@btime materialize(SMatrix, Bool, inner)  # XXX type stable but bad performace
+@btime materialize(SArray, inner)
+@btime materialize(SMatrix{3,3}, inner)
 #+end_src
 
 Since the size of each dimension is usually small and a fixed constant, we integrate with ~StaticArrays~.
@@ -447,10 +449,9 @@ let
     skew = MultilinearForm{4,3}(_skew)
     @btime materialize(Scalar, $solo)
     @btime SArray($inner)
-    @btime materialize(SArray, $skew#=(:,:,:,:)=#)
-end
+    @btime SArray($skew#=(:,:,:,:)=#)
+end;
 #+end_src
-
 
 
 #+begin_src jupyter-julia
@@ -744,7 +745,7 @@ end
 
 /Note:/ speed depends somewhat on order of arguments ~n~ and ~f~. It would be cool to someday have something that optimized loop ordering.  (Though maybe that should be left to the compiler.)
 
-#+begin_src jupyter-julia
+#+begin_src jupyter-julia :results silent
 function sourcesink(x)
     recip_r = inv(norm(x))
     _4π = convert(eltype(x), 4) * π
@@ -820,6 +821,7 @@ end
 ** Stress-free wall
 
 #+begin_src jupyter-julia
+using CairoMakie
 
 # Multilinear map that reflects a vector through a plane normal to n
 reflect(n::AbstractVector) = MultilinearMap{(3,3)}(
@@ -852,7 +854,7 @@ end
 
 * Stokes plane-wall system
 
-#+begin_src jupyter-julia :results scalar
+#+begin_src jupyter-julia
 let 𝐞 = StdBasis{3}(Real)
 
     function wall_stokeslet(x, y, f, n)
@@ -877,7 +879,6 @@ let 𝐞 = StdBasis{3}(Real)
     (fig,ax,p) = streamplot(velfield, -3..3, -2..2, axis=(;aspect=DataAspect()))
     # hlines!(ax, 0; color=:black)
     display(fig)
-    # wall_stokeslet([1,1,1], n, f, n)
 end
 #+end_src
 
@@ -891,13 +892,6 @@ end
     @test MM.samesize(SA_like_inner, inner) === Arr.size(inner) ==
         Arr.known_size(SA_like_inner)
     @test_throws DimensionMismatch MM.samesize(skew, SA_like_inner)
-end;
-
-@testset "Output types" begin
-    e = StdBasis{3}(Real)
-    v = rand(SVector{3,Float64})
-    @test eltype(inner(:,v)) == typeof(first(inner(:,v)))
-    # TODO: repeat for other types?
 end;
 #+end_src
 

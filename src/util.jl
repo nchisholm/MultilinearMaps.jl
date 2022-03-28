@@ -78,6 +78,8 @@ end
     _sizes_match(sz, as...)
 end
 
+# Can get rid of first method if ArrayInterface works around problems finding
+# known sizes of container types
 @inline _size(T::Type) = _determinant_size(T)
 @inline _size(a) = Arr.size(a)
 
