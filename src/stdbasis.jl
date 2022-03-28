@@ -152,7 +152,7 @@ Represent a `D`-dimensional basis for a vector space over a field of type `T`.
 """
 abstract type Basis{D,T} end
 
-@inline Base.length(::Basis{D}) where D = D
+@inline Base.length(::Basis{D}) where D = static(D)
 @inline field(::Basis{<:Any, T}) where T = T
 @inline Base.firstindex(::Basis) = 1
 @inline Base.lastindex(sb::Basis) = length(sb)
@@ -235,7 +235,7 @@ end
 Base.@propagate_inbounds Base.getindex(sb::StdBasis, i::Int) =
     _getindex(inbounds_safety(), sb, i)
 
-Base.Tuple(sb::StdBasis{D}) where D = NTuple{3}(sb)
+Base.Tuple(sb::StdBasis{D}) where D = NTuple{D}(sb)
 
 # @inline Base.getindex(sb::StdBasis, ::Colon, ::Colon) = sb
 #
