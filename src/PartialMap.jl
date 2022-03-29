@@ -1,15 +1,15 @@
 # Represent a partially contracted form by wrapping another MultilinearMap of a
 # "larger" size.
-struct PartialMap{Sz<:Size, T,
-                  MM<:MultilinearMap{<:Size},
-                  TT<:Tuple} <: MultilinearMap{Sz, T}
+struct PartialMap{N, Sz<:Size{N}, T,
+                  MM<:MultilinearMap,
+                  TT<:Tuple} <: MultilinearMap{N, Sz, T}
     parent::MM
     args::TT
     function PartialMap(parent::MultilinearMap, args0::Vararg{VecOrColon})
         sz = _appliedsize(parent, args0)
         args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
         T = typeof(parent(_parentargs(args0, args1)...))
-        new{typeof(sz), T, typeof(parent), typeof(args0)}(parent, args0)
+        new{length(sz), typeof(sz), T, typeof(parent), typeof(args0)}(parent, args0)
     end
 end
 
@@ -28,7 +28,8 @@ end
     (arg, _parentargs(fixedargs, args)...)
 @inline _parentargs((arg, fixedargs...)::Tuple, args::Tuple) =
     (arg, _parentargs(fixedargs, args)...)
-@inline (f::PartialMap{<:Size{N}})(vs::Vararg{VecOrColon,N}) where N =
+
+@inline (f::PartialMap{N})(vs::Vararg{VecOrColon,N}) where N =
     f.parent(_parentargs(f.args, vs)...)
 
 function Base.show(io::IO, f::PartialMap)

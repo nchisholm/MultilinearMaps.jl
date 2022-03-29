@@ -1,32 +1,28 @@
 export MultilinearMap, MultilinearForm, AtomicMultilinearMap
 
 
-abstract type MultilinearMap{Sz,T} end
+abstract type MultilinearMap{N, Sz<:SizeS{N}, T} end
 
 # TODO docstring
-@inline function MultilinearMap{Sz}(f) where {Sz<:Size}
-    AtomicMultilinearMap{Sz}(f)
-end
+@inline MultilinearMap{N,Sz}(f) where {N,Sz} =
+    AtomicMultilinearMap{N,Sz}(f)
 
 # TODO docstring
-@inline MultilinearMap{Sz #= Tuple =#}(f) where Sz =
-    MultilinearMap{typeof(static(Sz::Size))}(f)
+@inline MultilinearMap(::Sz, f) where {N, Sz<:SizeS{N} #= Size =#} =
+    AtomicMultilinearMap{N, Sz}(f)
 
 
-const MultilinearMapN{N} = MultilinearMap{<:Size{N}}
-
-const MultilinearForm{N,D} = MultilinearMap{CubeSize{N,D}}
-
+const MultilinearForm{N,D} = MultilinearMap{N, CubeSize{N,D}}
 
 # Default Evaluation
 
 const VecOrColon = Union{AbstractVector,Colon}
 
 # Identity operation
-@inline (f::MultilinearMap{<:Size{N}})(::Vararg{Colon,N}) where {N} = f
+@inline (f::MultilinearMap{N})(::Vararg{Colon,N}) where {N} = f
 
 # Partial evaluation / contraction
-@inline (f::MultilinearMap{<:Size{N}})(args::Vararg{VecOrColon,N}) where {N} =
+@inline (f::MultilinearMap{N})(args::Vararg{VecOrColon,N}) where {N} =
     PartialMap(f, args...)
 
 function Base.show(io::IO, ::MIME"text/plain", f::MultilinearMap)
@@ -42,20 +38,21 @@ Wraps a function `impl` that is assumed to have a method
 multilinear in its arguments, i.e., linear when all of the arguments but one
 are held fixed.
 """
-struct AtomicMultilinearMap{Sz<:Size,T,F} <: MultilinearMap{Sz,T}
+struct AtomicMultilinearMap{N, Sz<:Size{N}, T, F} <: MultilinearMap{N,Sz,T}
     impl::F
-    function AtomicMultilinearMap{Sz}(impl::F) where {Sz<:SizeS,F}
+    # NOTE: only allow fully static sizes for now
+    function AtomicMultilinearMap{N, Sz}(impl::F) where {N, Sz<:SizeS{N}, F}
         sz::Sz = static(known(Sz))            # convert Type{<:Size} -> sz::Size
         args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
         T = typeof(impl(args1...))            # determine output type
-        new{Sz, T, F}(impl)
+        new{N, Sz, T, F}(impl)
     end
 end
 
-@inline (f::AtomicMultilinearMap{<:Size{0}})() = f.impl()  # disambiguate
-@inline (f::AtomicMultilinearMap{<:Size{N}})(vs::Vararg{AbstractVector,N}) where {N} =
+@inline (f::AtomicMultilinearMap{0})() = f.impl()  # disambiguate
+@inline (f::AtomicMultilinearMap{N})(vs::Vararg{AbstractVector,N}) where {N} =
     f.impl(vs...)
 
 function Base.show(io::IO, f::AtomicMultilinearMap)
-    print(io, "MultilinearMap{", size(f), "}(", f.impl, ")")
+    print(io, "@MultilinearMap{", size(f), "}(", f.impl, ")")
 end

@@ -1,23 +1,23 @@
 # Act like an array
 
-@inline Base.IteratorSize(::Type{<:MultilinearMap{<:Size{N}}}) where N =
+@inline Base.IteratorSize(::Type{<:MultilinearMap{N}}) where N =
     Base.HasShape{N}()
 
 Base.IndexStyle(::Type{<:MultilinearMap}) = IndexCartesian()
 Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
 
-@inline Base.eltype(::Type{<:MultilinearMap{<:Size,T}}) where T = T
+@inline Base.eltype(::Type{<:MultilinearMap{N, <:Size{N}, T}}) where {N,T} = T
 
 # Needs to be defined if `MultilinearMap` is not an `AbstractArray` even though
 # it `HasShape{N}`
-@inline Base.ndims(::Type{<:MultilinearMap{<:Size{N}}}) where N = N
+@inline Base.ndims(::Type{<:MultilinearMap{N}}) where N = N
 @inline Base.ndims(f::MultilinearMap) = Base.ndims(typeof(f))
 
 # TODO: support dynamic dimensions?
-@generated Arr.axes_types(::Type{<:MultilinearMap{Sz}}) where Sz =
+@generated Arr.axes_types(::Type{<:MultilinearMap{N,Sz}}) where {N, Sz<:Size{N}} =
     Tuple{map(D -> Arr.SOneTo{known(D)}, fieldtypes(Sz))...}
 
-@generated Arr.axes(::T) where {N, T<:MultilinearMap{<:Size{N}}} =
+@generated Arr.axes(::T) where {N, T<:MultilinearMap{N}} =
     ntuple(i -> Arr.axes_types(T, i)(), Val(N))
 
 @inline Base.length(f::MultilinearMap) = dynamic(Arr.static_length(f))
@@ -29,16 +29,16 @@ Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
 @inline Base.CartesianIndices(f::MultilinearMap) = CartesianIndices(axes(f))
 
 # TODO: decide how to handle trailing singleton indices
-@propagate_inbounds Base.getindex(f::MultilinearMapN{N}, I::Vararg{Int,N}) where N =
+@propagate_inbounds Base.getindex(f::MultilinearMap{N}, I::Vararg{Int,N}) where N =
     _getindex(inbounds_safety(), f, I...)
 
-@propagate_inbounds Base.getindex(f::MultilinearMapN{N}, I::CartesianIndex{N}) where N =
+@propagate_inbounds Base.getindex(f::MultilinearMap{N}, I::CartesianIndex{N}) where N =
     _getindex(inbounds_safety(), f, I)
 
-@inline _getindex(✓::Safety, f::MultilinearMapN{N}, I::Vararg{Int,N}) where N =
+@inline _getindex(✓::Safety, f::MultilinearMap{N}, I::Vararg{Int,N}) where N =
     f(map((L,i) -> StdUnitVector{known(L)}(✓, i), Arr.size(f), I)...)
 
-@inline _getindex(✓::Safety, f::MultilinearMapN{N}, I::CartesianIndex{N}) where N =
+@inline _getindex(✓::Safety, f::MultilinearMap{N}, I::CartesianIndex{N}) where N =
     _getindex(✓, f, Tuple(I)...)
 
 @inline Base.firstindex(f::MultilinearMap) = first(CartesianIndices(f))
@@ -55,7 +55,7 @@ Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
     # Should be safe to elide the unit vector validity check
 end
 
-@inline function Base.iterate(f::MultilinearMap{K}, state) where {K}
+@inline function Base.iterate(f::MultilinearMap, state)
     maybe(iterate(CartesianIndices(f), state)) do (I′, state′)
         (_getindex(UNSAFE, f, I′), state′)
     end

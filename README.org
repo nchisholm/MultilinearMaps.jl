@@ -314,7 +314,7 @@ using BenchmarkTools
 using Test
 
 let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
-    inner = MultilinearMap{(3,3)}(dot)
+    inner = MultilinearMap(static((3,3)), dot)
     skew = MultilinearForm{4,3}(_skew)
     println("Contraction, map with argument dimensions $(size(inner))")
     @assert 1 == @btime($inner($(u,u)...))
@@ -816,7 +816,7 @@ let sb = StdBasis{3}(Real)
 end
 #+end_src
 
-* Complicated example: Stokes plane-boundary images
+* Use case: Stokes plane-boundary images
 
 ** Stress-free wall
 
@@ -824,7 +824,7 @@ end
 using CairoMakie
 
 # Multilinear map that reflects a vector through a plane normal to n
-reflect(n::AbstractVector) = MultilinearMap{(3,3)}(
+reflect(n::AbstractVector) = MultilinearForm{2,3}(
     (e,v) -> (e⋅v) - 2(e⋅n)*(n⋅v)  # 𝗜 - 2 𝐧 ⊗ 𝐧
 )
 let e = StdBasis{3}(Real)
@@ -852,7 +852,7 @@ let sb = StdBasis{3}(Real)
 end
 #+end_src
 
-* Stokes plane-wall system
+** Stokes plane-wall system
 
 #+begin_src jupyter-julia
 let 𝐞 = StdBasis{3}(Real)

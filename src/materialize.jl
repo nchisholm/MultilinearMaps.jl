@@ -13,7 +13,7 @@ materialize!(tgt::AbstractArray, f::MultilinearMap) =
 
 # Sequantially fills `tgt` with the components of `f`.
 @generated function _unsafe_materialize!(tgt::AbstractArray{<:Any, N},
-                                         f::MultilinearMap{<:Size{N}}) where N
+                                         f::MultilinearMap{N}) where N
     quote
         @nloops $N i tgt begin
             # tgt[i,j,k,...] = f[i,j,k,...]
@@ -71,5 +71,5 @@ target_type(SA::Type{<:StaticArray}, f::MultilinearMap) =
 
 
 # Get a StaticArrays.Size trait for a MultilinearMap
-@inline _SA.Size(f::MultilinearMap{<:SizeS}) = _SA.Size(Arr.known_size(f))
-@inline _SA.Length(f::MultilinearMap{<:SizeS}) = _SA.Length(Arr.known_length(f))
+@inline _SA.Size(f::MultilinearMap) = _SA.Size(Arr.known_size(f))
+@inline _SA.Length(f::MultilinearMap) = _SA.Length(Arr.known_length(f))
