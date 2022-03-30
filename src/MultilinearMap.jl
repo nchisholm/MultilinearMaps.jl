@@ -11,19 +11,32 @@ abstract type MultilinearMap{N, Sz<:SizeS{N}, T} end
 @inline MultilinearMap(::Sz, f) where {N, Sz<:SizeS{N} #= Size =#} =
     AtomicMultilinearMap{N, Sz}(f)
 
-
 const MultilinearForm{N,D} = MultilinearMap{N, CubeSize{N,D}}
 
-# Default Evaluation
+@inline nargs(::MultilinearMap{N}) where {N} = N
 
-const VecOrColon = Union{AbstractVector,Colon}
+# Argument wrapper/trait
+abstract type ApplyMode end
+struct FullApply <: ApplyMode end
+struct PartialApply <: ApplyMode end
+
+@inline ApplyMode() = FullApply()
+@inline ApplyMode(::Colon, ::Vararg) = PartialApply()
+@inline ApplyMode(::Any, args...) = ApplyMode(args...)
+
+# Choose full versus partial evaluation
+@inline (f::MultilinearMap{N})(args::Vararg{Any,N}) where N =
+    f(ApplyMode(args...), args...)
+
+# Wrong argument count fallback
+@noinline (f::MultilinearMap)(args...) =
+    throw(ArgumentError("expected $(ndims(f)) arguments but got $(length(args)) of them"))
 
 # Identity operation
-@inline (f::MultilinearMap{N})(::Vararg{Colon,N}) where {N} = f
+@inline (f::MultilinearMap)(::PartialApply, ::Vararg{Colon}) = f
 
 # Partial evaluation / contraction
-@inline (f::MultilinearMap{N})(args::Vararg{VecOrColon,N}) where {N} =
-    PartialMap(f, args...)
+@inline (f::MultilinearMap)(::PartialApply, args...) = PartialMap(f, args...)
 
 function Base.show(io::IO, ::MIME"text/plain", f::MultilinearMap)
     print(io, f, ":\n  ",
@@ -49,9 +62,8 @@ struct AtomicMultilinearMap{N, Sz<:Size{N}, T, F} <: MultilinearMap{N,Sz,T}
     end
 end
 
-@inline (f::AtomicMultilinearMap{0})() = f.impl()  # disambiguate
-@inline (f::AtomicMultilinearMap{N})(vs::Vararg{AbstractVector,N}) where {N} =
-    f.impl(vs...)
+# @inline (f::AtomicMultilinearMap{0})(::Args{0}) = f.impl()  # disambiguate
+@inline (f::AtomicMultilinearMap)(::FullApply, args...) = f.impl(args...)
 
 function Base.show(io::IO, f::AtomicMultilinearMap)
     print(io, "@MultilinearMap{", size(f), "}(", f.impl, ")")

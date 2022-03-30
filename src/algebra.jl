@@ -32,7 +32,7 @@ end
 @inline operands(::Type{<:ScalarMultiple}, f::ScalarMultiple) = (f.parent, f.scalar)
 
 # Evaluation
-@inline (f::ScalarMultiple)(args::Vararg{VecOrColon}) = f.scalar * f.parent(args...)
+@inline (f::ScalarMultiple)(args...) = f.scalar * f.parent(args...)
 
 # Construction by scalar multiplication
 @inline Base.:*(f::MultilinearMap, a::Number) = ScalarMultiple(f, a)
@@ -57,17 +57,21 @@ struct Sum{N, Sz<:Size{N}, T, MMs<:TupleN{MultilinearMap{N,Sz}}} <: MultilinearM
         sz = samesize(fs...)
         args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
         T = typeof(_eval_sum(fs, args1))                 # determine output type
+        # T = promote_eltype(fs...) is tempting but this doesn't work generally
+        # because, e.g., promote_type(Bool, Bool) = Bool but
+        #     true + true = 1::Int
         new{length(sz), typeof(sz), T, typeof(fs)}(fs)
     end
 end
 
-@inline _eval_sum(operands::TupleN{MultilinearMap}, args::TupleN{VecOrColon}) =
+@inline _eval_sum(operands::TupleN{MultilinearMap}, args::Tuple) =
     mapreduce(apply(args), +, operands)
 
-@inline operands(::Type{<:Sum}, sumf::Sum) = sumf.operands
+# @inline operands(::Type{<:Sum}, sumf::Sum) = sumf.operands
 
 # Evaluation
-@inline (sumf::Sum)(args::Vararg{VecOrColon}) = _eval_sum(sumf.operands, args)
+@inline (sumf::Sum)(::FullApply, args...) = _eval_sum(sumf.operands, args)
+# NOTE: PartialMap will wrap this type
 # TODO check performance
 
 @inline Base.:-(f::MultilinearMap) = -one(eltype(f)) * f

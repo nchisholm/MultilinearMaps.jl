@@ -21,9 +21,16 @@ const TupleN{T,N} = NTuple{N,T}
 @generated tuplecount(::Type{T}) where {T<:Tuple} = fieldcount(T)
 @inline tupletype(::Type{T}, i) where {T<:Tuple} = fieldtype(T, i)
 
+# From a given tuple, return the same tuple but with elements of a given type
+# `T` removed.
+@inline _removetype(::Type, ::Tuple{}) = ()
+@inline _removetype(::Type{T}, (_, rest...)::Tuple{T,Vararg}) where T =
+    _removetype(T, rest)
+@inline _removetype(T::Type, (x, rest...)::Tuple) = (x, _removetype(T, rest)...)
 
+_mlkernel(u, v) = one(eltype(u)) * one(eltype(v)) + one(eltype(u)) * one(eltype(v))
 # NOTE: there is a function with this name in Base we could replace this with.
-@inline promote_eltype(Ts...) = promote_type(map(eltype, Ts)...)
+# @inline promote_eltype(Ts...) = promote_type(map(eltype, Ts)...)
 
 
 const Maybe{T} = Union{T,Nothing}

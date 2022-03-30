@@ -289,18 +289,23 @@ Check that things work correctly.
 #+begin_src jupyter-julia
 using Test
 
-@testset "Multilinear Form -> Scalar" begin
+@testset "ApplyMode" begin
+    @test MM.ApplyMode() === MM.FullApply()
+    @test MM.ApplyMode([1,2], [3,4,5], [5,6]) === MM.FullApply()
+    @test MM.ApplyMode([1,2,3,4], :, [5,6]) === MM.PartialApply()
+end;
+@testset "MultilinearMap Evaluation" begin
     u = StdUnitVector{2}(1) # SVector(1., 0.)
     v = StdUnitVector{2}(2) # SVector(0., 1.)
     solo = @inferred MultilinearForm{0,3}(_just_true)
     inner = @inferred MultilinearForm{2,2}(dot)
     skew = @inferred MultilinearForm{4,2}(_skew)
     @test solo() == true
-    @test_throws MethodError solo(u)
+    @test_throws ArgumentError solo(u)
     @test inner(u,u) == 1
     @test inner(u,v) == 0
     @test inner(v,u) == 0
-    @test_throws MethodError inner(u)
+    @test_throws ArgumentError inner(u)
     @test skew(u,u,v,v) == 0
     @test skew(u,v,u,v) == 1
     @test skew(u,v,v,u) == -1
@@ -346,8 +351,8 @@ Some tests:
     let
         e = StdUnitVector{2}(1)
         inner = @inferred MultilinearForm{2,2}(dot)
-        @test_throws MethodError inner(:,:,:)
-        @test_throws MethodError inner(:)
+        @test_throws ArgumentError inner(:,:,:)
+        @test_throws ArgumentError inner(:)
         @test inner(:,:) === inner
         @inferred inner(e,:)
         @test inner(:,e) == inner(e,:)
@@ -474,9 +479,10 @@ That is, we can take linear combinations of multilinear maps and generally produ
 #+begin_src jupyter-julia :results scalar
 @testset "Vector Space" begin
     @testset "Equality" begin
+        e = StdBasis{3}(Real)
         @test inner == inner
-        @test inner != skew
-        @test skew != inner
+        @test inner != skew && skew != inner
+        @test skew(e[1], :, e[2], :) != inner && inner != skew(e[1], :, e[2], :)
     end
     @testset "Scalar Multiples" begin
         @test MM.ScalarMultiple(inner, 0.5) == 0.5 * inner == inner / 2
@@ -724,22 +730,43 @@ end
 If we include third order tensors (e.g. stresslets), the ergonomic advantages of ~MultilinearForms~ are significantly more apparent.
 
 #+begin_src jupyter-julia :results silent
+stresslet_ang(n̂) = MultilinearForm{3,3}((e1, e2, e3) ->
+    3*(n̂⋅e1)*(n̂⋅e2)*(n̂⋅e3) + (e1⋅e2)*(n̂⋅e3) - (e3⋅e1)*(n̂⋅e2) - (e2⋅e3)*(n̂⋅e1))
+
 function stresslet(x)
     recip_r = inv(norm(x))
     _8π = convert(eltype(x), 8) * π
     radial_fn = recip_r^2 / _8π
     n̂ = x * recip_r
-    angular_fn = MultilinearForm{3,3}((e1, e2, e3) ->
-        3*(n̂⋅e1)*(n̂⋅e2)*(n̂⋅e3) + (e1⋅e2)*(n̂⋅e3) - (e3⋅e1)*(n̂⋅e2) - (e2⋅e3)*(n̂⋅e1))
-    return MultilinearForm{3,3}((e1, e2, e3) -> radial_fn * angular_fn(e1, e2, e3))
+    return radial_fn * stresslet_ang(n̂)
+    # return MultilinearForm{3,3}((e1, e2, e3) -> radial_fn * angular_fn(e1, e2, e3))
 end
 #+end_src
 
-#+begin_src jupyter-julia
-@btime SArray(stresslet(x)(:,n,f)) setup=begin
-    f = normalize(SVector(1,1,0))
+#+begin_src jupyter-julia :results scalar
+@btime SArray(stresslet(x)(:,f,n) - stresslet(x)(:,n,f)) setup=begin
+    e = StdBasis{3}(Real)
+    f = normalize(SVector(1,1,1))
     x = SVector(1.,2,3)
-    n = ê{3}(1)
+    n = e[1]
+end
+@btime SArray(stresslet_x(:,f,n) - stresslet_x(:,n,f)) setup=begin
+    e = StdBasis{3}(Real)
+    f = normalize(SVector(1,1,1))
+    x = SVector(1.,2,3)
+    n = e[1]
+    stresslet_x = stresslet(x)
+end
+#+end_src
+
+#+begin_src jupyter-julia :results scalar
+let
+    e = StdBasis{3}(Real)
+    f = normalize(SVector(1,1,1))
+    x = SVector(1.,2,3)
+    n = e[1]
+    stresslet_x = stresslet(x)
+    @test stresslet_x(:,f,n) - stresslet_x(:,f,n) == (stresslet_x - stresslet_x)(:,f,n)
 end
 #+end_src
 

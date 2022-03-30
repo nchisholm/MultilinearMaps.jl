@@ -1,4 +1,4 @@
-using Base: @propagate_inbounds, tail
+using Base: @propagate_inbounds, tail, promote_eltype
 import Base
 using Static
 import ArrayInterface as Arr
