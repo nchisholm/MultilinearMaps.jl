@@ -1,4 +1,8 @@
 #+OPTIONS: toc:nil
+
+# Read-only tangled files
+#+PROPERTY: header-args :tangle-mode (identity #o444)
+# Set Jupyter kernel/session options for emacs-jupyter
 #+PROPERTY: header-args:jupyter-julia :session DevNotes :kernel julia :eval no-export :async yes :exports both
 
 :TEX_MATHJAX_SETUP:
@@ -93,7 +97,7 @@ However, representing multilinear maps as ~function~​s on vectors in computati
 (For instance, computing an inner product by naively multiplying by the identity matrix by \(v_1\) on the left and \(v_2\) on the right is not very efficient.)
 
 Here is another example of a 4-linear form, which takes four vectors and produces a scalar
-#+begin_src jupyter-julia :results silent :tangle examples.jl
+#+begin_src jupyter-julia :results silent :tangle test/examples.jl
 @inline _skew(v1, v2, v3, v4) = ((v1⋅v3)*(v2⋅v4) - (v1⋅v4)*(v2⋅v3))
 @inline _skew(vs::NTuple{4}) = _skew(vs...)
 #+end_src
@@ -103,7 +107,7 @@ and has components \(δ_{ik} δ_{jl} - δ_{il} δ_{jk}\).
 
 The following functions are similar to ~_inner~ and ~_skew~, but are directly functions of indices rather than vectors.  They are essentially equivalent if one restricts attention to arguments ~v1, ⋯, vN~ being one of the standard unit vectors \(\uvec e_1 ⋯ \uvec e_N\).
 We can use them to directly compute the components of each form in a way that is efficient over taking dot products of (over the product space of) the standard unit vectors in \(\Reals^D\).
-#+begin_src jupyter-julia :results silent :tangle examples.jl
+#+begin_src jupyter-julia :results silent :tangle test/examples.jl
 # The Kronecker delta, δ_{ij}, as a function of indices
 inner_ixfn(i, j) = (i==j)
 @inline inner_ixfn(args::Dims{2}) = inner_ixfn(args...)
