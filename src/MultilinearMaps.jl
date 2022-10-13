@@ -10,6 +10,7 @@ include("PartialMap.jl")
 include("algebra.jl")
 include("arraylike.jl")
 include("materialize.jl")
+include("exterior.jl")
 
 
 end # module

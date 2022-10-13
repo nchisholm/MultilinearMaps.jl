@@ -3,8 +3,10 @@ using Test
 using MultilinearMaps
 
 import ArrayInterface as Arr
+import ArrayInterfaceStaticArrays
 using LinearAlgebra
 using StaticArrays
+using Static
 
 const MM = MultilinearMaps
 
@@ -54,9 +56,9 @@ include("examples.jl")
 
 const ê = StdUnitVector  # For convenience
 _just_true() = true
-const solo = @inferred MultilinearForm{0}(_just_true)
-const inner = @inferred MultilinearForm{2,3}(dot)
-const skew = @inferred MultilinearForm{4,3}(_skew)
+const solo = @inferred MultilinearMap(_just_true, ())
+const inner = @inferred MultilinearMap(dot, static((3,3)))
+const skew = @inferred MultilinearMap(_skew, static((3,3,3,3)))
 
 @testset "AtomicMultilinearMap" begin
     u = StdUnitVector{2}(1) # SVector(1., 0.)

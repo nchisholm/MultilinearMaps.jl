@@ -3,7 +3,7 @@
 # Read-only tangled files
 #+PROPERTY: header-args :tangle-mode (identity #o444)
 # Set Jupyter kernel/session options for emacs-jupyter
-#+PROPERTY: header-args:jupyter-julia :session DevNotes :kernel julia :eval no-export :async yes :exports both
+#+PROPERTY: header-args:jupyter-julia :session README :kernel julia-official-zink :eval no-export :async yes :exports both
 
 :TEX_MATHJAX_SETUP:
 #+LATEX_COMPILER: lualatex
@@ -49,6 +49,7 @@
 using LinearAlgebra
 using Static
 using ArrayInterface: ArrayInterface as Arr
+using ArrayInterfaceStaticArrays
 using StaticArrays
 using StaticArrays: sacollect
 using MultilinearMaps
@@ -67,6 +68,7 @@ if !@isdefined(BenchmarkTools)
 end
 
 showit(x) = (show(stdout, "text/plain", x); println())
+showit_ret(x) = (show(stdout, "text/plain", x); println(); x)
 #+end_src
 :END:
 
@@ -76,37 +78,51 @@ showit(x) = (show(stdout, "text/plain", x); println())
 
 * Introduction
 
-Multilinear maps (see [[wikipedia:Multilinear_map][Wikipedia]] and [[https://www.isical.ac.in/~arnabc/q/tensor.html][this page]]) are functions of \(K\) vectors (potentially belonging to difference vector spaces) and map them to vectors in an "output" vector space \(W\).
+Multilinear maps (see also [[wikipedia:Multilinear_map][Wikipedia]] and [[https://www.isical.ac.in/~arnabc/q/tensor.html][this page]]) are functions of \(K\) vectors (potentially belonging to different vector spaces) and map them to vectors in an output vector space \(W\).
 Thus, a multilinear map is a function
 \begin{equation*}
 f : V_1 ⋯ V_K → W
 \end{equation*}
 If the codomain of \(f\) is a field of scalars, then we call \(f\) a [[wikipedia:Multilinear_form][multilinear form]].
 If \(M\) of the \(V_1, ⋯, V_K\) are a vector space \(V\) and the remaining \(N\) are the dual space of \(V\), \(V^*\), then \(f\) is called a \((M,N)\)-tensor.
-A familiar example of a multilinear map (a multilinear form in this case) is the standard inner product (dot product) of vectors, which is a bilinear form (also called a 2-linear form or a 2nd order multilinear form).
+A familiar example of a multilinear map (a multilinear form in this case) is the standard inner product (dot product) of vectors, which is a bilinear form (also called a 2-linear form or a 2nd-order multilinear form).
 It takes two vectors and produces a scalar.
 
-The most general form of a multilinear map is
+The most general form of a \(K\)-linear map is
 \begin{equation*}
   f(v_1, ⋯, v_K) = \sum_{i_1}^{D_1} ⋯ \sum_{i_K}^{D_K} \vec A_{i_1 ⋯ i_K} v_{1 i_1} ⋯ v_{K i_K}
 \end{equation*}
 where \(D_j\) gives the dimension of the vector space to which \(\vec v_j\) belongs.
-Thus, \(f\) can be represented by an \(K\)-dimensional array of components.
-For example, for the inner product form, \(\uvec e_i ⋅ \uvec e_j \) corresponds to the Kronecker delta \(δ_{ij}\).
-However, representing multilinear maps as ~function~​s on vectors in computational code is useful, especially if \(f\) has special structure.
+That is, \(f\) can be represented by an \(K\)-dimensional array of components.
+The components \(\vec A_{i_1, ⋯, i_k}\) are given by setting each of the vector arguments to one of the standard unit vectors \(\uvec e_i\) for \(i ∈ 1 ⋯ D_j\); \( \vec A_{i_i ⋯ i_k} = f(\uvec e_{i_1}, ⋯, \uvec e_{i_K})\)
+For the inner product, \(\uvec e_i ⋅ \uvec e_j \) the components are that of the Kronecker delta \(δ_{ij}\).
+However, representing multilinear maps as functions on vectors (rather than arrays) in computational code is useful, especially if \(f\) has special structure.
 (For instance, computing an inner product by naively multiplying by the identity matrix by \(v_1\) on the left and \(v_2\) on the right is not very efficient.)
 
-Here is another example of a 4-linear form, which takes four vectors and produces a scalar
+Here is an example of a 4-linear form, which takes four vectors and produces a scalar
 #+begin_src jupyter-julia :results silent :tangle test/examples.jl
 @inline _skew(v1, v2, v3, v4) = ((v1⋅v3)*(v2⋅v4) - (v1⋅v4)*(v2⋅v3))
 @inline _skew(vs::NTuple{4}) = _skew(vs...)
 #+end_src
 and has components \(δ_{ik} δ_{jl} - δ_{il} δ_{jk}\).
+It is one of the three isotropic Cartesian tensors.
+We can compute the components as follows for the three-dimensional case.
+#+begin_src jupyter-julia
+let e1 = SVector(1.,0,0),
+    e2 = SVector(0,1.,0),
+    e3 = SVector(0,0,1.)   # unit vectors in ℝ³
+
+    @show A_1231 = _skew(e1, e2, e3, e1)
+    @show A_1212 = _skew(e1, e2, e1, e2)
+end;
+#+end_src
+
+Now, this is not as efficient as it could be we are using ~LinearAlgebra.dot~ (~⋅~) on "literal" unit vectors, so there is going to be some unnecesary ~0*0~ or ~1*0~ operations.
 
 ** Functions on indices
 
-The following functions are similar to ~_inner~ and ~_skew~, but are directly functions of indices rather than vectors.  They are essentially equivalent if one restricts attention to arguments ~v1, ⋯, vN~ being one of the standard unit vectors \(\uvec e_1 ⋯ \uvec e_N\).
-We can use them to directly compute the components of each form in a way that is efficient over taking dot products of (over the product space of) the standard unit vectors in \(\Reals^D\).
+The following functions are similar to ~dot~ and ~_skew~, but are directly functions of indices rather than vectors.  They are essentially equivalent if one restricts attention to arguments ~v1, ⋯, vN~ being one of the standard unit vectors \(\uvec e_1 ⋯ \uvec e_N\), but the "index" versions are less flexible for the same reason---they cannot take in any set of vectors.
+On the other hand, the "index" versions directly and efficiently give the components of a multilinear map.
 #+begin_src jupyter-julia :results silent :tangle test/examples.jl
 # The Kronecker delta, δ_{ij}, as a function of indices
 inner_ixfn(i, j) = (i==j)
@@ -119,7 +135,7 @@ skew_ixfn(i, j, k, l) = (i==k) * (j==l) - (i==l) * (j==k)
 @inline skew_ixfn(I::CartesianIndex{4}) = skew_ixfn(Tuple(I)...)
 #+end_src
 
-We can loop over functions like these to fill up an array of tensor components.
+We can loop over functions like these to fill up an array of components.
 (In [[file:src/util.jl]], we define ~fillfn!~, which has this job.)
 
 
@@ -150,19 +166,22 @@ let # SDims = NTuple{4,3}
 end
 #+end_src
 
+*Developer Note.*
 Use of ~sacollect~ is most efficient because it effectively unrolls all the loops.
 However, using approaches with looping might be beneficial in cases where loop unrolling would create too much work for the compiler.
-We will try to sacrifice as little performance over these "baseline" functions on indices as possible in our implementation below.
+
+The key to maintaining the flexibility of something like ~_skew~ while retaining the efficiency of ~skew_ixfn~ for computing components is simply to define a special unit vector type that knows how to interact with other unit vectors as well as "regular" vectors.
+We will try to sacrifice as little performance over the "baseline" functions on indices as possible in our implementation below.
 
 
 * Unit vectors and indices
 
-There is really no distinction between functions on indices, which give the components of a tensor, and multilinear forms on the standard unit vectors because the index \(i\) directly maps over to the unit vector \(e_i\) pointing in the \(i\)th direction.
-We therefore define ~StdUnitVector{D}(d::Int)~ (see [[file:src/stdbasis.jl][stdbasis.jl]]) to represent a standard unit vector that points in the ~d~-th direction of a ~D~-dimensional vector space.
+There is not much distinction between functions on indices and multilinear maps on the standard unit vectors because the index \(i\) directly maps over to the unit vector \(e_i\) pointing in the \(i\)th direction.
+We therefore define ~StdUnitVector{D}(d::Int)~ (see [[file:src/StdBasis.jl][StdBasis.jl]]) to represent a standard unit vector that points in the ~d~-th direction of a ~D~-dimensional vector space.
 
 Some notes about the implementation:
-- the dot product (~LinearAlgebra.dot~) of two ~StdUnitVector~​s amounts to checking if they point in the same direction
-- the dot product of a ~StdUnitVector~ with a "regular" vector just performs indexing
+- the dot product (~LinearAlgebra.dot~) of two ~StdUnitVector~​s amounts to checking if they point in the same direction; ~e ⋅ e′ := e.direction == e′.direction~
+  - the dot product of a ~StdUnitVector~ with a "regular" vector just performs indexing; ~e ⋅ v := v[e.direction]~
 - the dot product of any other kinds of "regular" vectors just falls back to the usual algorithm given by ~LinearAlgebra.dot~
 
 Now, if we evaluate ~dot~ where the operands are pairs of ~StdUnitVector{N}~​s, we really just have a function that tests whether the ~direction~ of each vector is the same.
@@ -175,12 +194,19 @@ let sbasis = StdBasis{3}(Real)
 end
 #+end_src
 
-Note that the matrix elements are of type ~Bool~ values is created ~StdUnitVector~.
+Note that the matrix elements are of type ~Bool~.
 This is a direct result of the boolean tests performed for each element of the matrix.
 Indeed, the code above is equivalent to
 #+begin_src julia :exports code :eval no
 [i == j for j ∈ 1:3, i ∈ 1:3]
 #+end_src
+
+#+begin_src jupyter-julia
+let e = StdUnitVector
+    @btime StdUnitVector{3}(1)
+end
+#+end_src
+
 
 ** Tests
 
@@ -236,14 +262,15 @@ However, we may want to elide such checks if we are confident that the unit vect
 Therefore, we provide "unsafe construction" of unit vectors to elide the dimensionality check.
 (Warning: doing so could lead to strange difficult-to-debug behavior; see below.)
 #+begin_src jupyter-julia
-collect(StdUnitVector{2}(MM.UNSAFE, 3))  # 3 not less than 2!
+collect(StdUnitVector{2}(3, MM.UNSAFE))  # 3 not less than 2!
 #+end_src
 
 We can check for any overhead of the ~UNSAFE~ method to direct computation on the indices, and there seems to be none.
 #+begin_src jupyter-julia :results scalar
 using MultilinearMaps: Safety, SAFE, UNSAFE
 
-@inline inds2uvecs(safety::S, inds::Vararg{Int}) where {S<:Safety} = map(i -> StdUnitVector{3}(safety, i), inds)
+@inline inds2uvecs(safety::S, inds::Vararg{Int}) where {S<:Safety} =
+    map(i -> StdUnitVector{3}(i, safety), inds)
 @inline inds2uvecs(safety::S) where {S<:Safety} = (inds...) -> inds2uvecs(safety, inds...)
 # @inline inds2uvecs(I::CartesianIndex) = map(StdUnitVector{3}, Tuple(I))
 println("Function of indices")
@@ -262,8 +289,8 @@ Interestingly, completely explicit loops are little faster, but why?
 #+begin_src jupyter-julia
 @btime(
     begin for l ∈ axes(A,4), k ∈ axes(A,3), j ∈ axes(A,2), i ∈ axes(A,1)
-        @inbounds A[i,j,k,l] = _skew(StdUnitVector{3}(UNSAFE, i), StdUnitVector{3}(UNSAFE, j),
-                                     StdUnitVector{3}(UNSAFE, k), StdUnitVector{3}(UNSAFE, l))
+        @inbounds A[i,j,k,l] = _skew(StdUnitVector{3}(i, UNSAFE), StdUnitVector{3}(j, UNSAFE),
+                                     StdUnitVector{3}(k, UNSAFE), StdUnitVector{3}(l, UNSAFE))
     end
     A
     end,
@@ -323,7 +350,7 @@ using BenchmarkTools
 using Test
 
 let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
-    inner = MultilinearMap(static((3,3)), dot)
+    inner = MultilinearMap(dot, static((3,3)))
     skew = MultilinearForm{4,3}(_skew)
     println("Contraction, map with argument dimensions $(size(inner))")
     @assert 1 == @btime($inner($(u,u)...))
@@ -385,8 +412,12 @@ We leave that to later work.
 
 We can now produce an identity matrix as follows by using ~inner~, defined above, and ~StdUnitVector~.
 #+begin_src jupyter-julia
-@btime [inner(e1, e2) for e1 ∈ sb, e2 ∈ sb] setup=begin
-    sb = StdBasis{3}(Real)
+# @btime [inner(e1, e2) for e1 ∈ sb, e2 ∈ sb] setup=begin
+#     sb = StdBasis{3}(Real)
+# end
+let sb = StdBasis{3}(Real)
+    # collect(e1 ⋅ e1 for e1 ∈ sb)
+    supertypes(typeof(length(sb)))
 end
 #+end_src
 
@@ -508,9 +539,8 @@ That is, we can take linear combinations of multilinear maps and generally produ
 end;
 #+end_src
 
-* More complex (and useful) multilinear forms
 
-** Spherical harmonics
+* Spherical harmonics
 
 The functions below give the spherical harmonics (the traceless symmetric tensors) on \(\mathbb S^2\).
 (/Note, these are great for unit tests!/ Can also check that the results are symmetric and traceless to ensure there is no regression in computing correct results.)
@@ -571,7 +601,6 @@ _issymmetric(A::AbstractArray{<:Any, 2}) =
     end
 end;
 #+end_src
-
 Lets check the performance of these functions.
 
 #+begin_src jupyter-julia
@@ -580,21 +609,6 @@ using BenchmarkTools, StaticArrays
 bmarks = let
     n̂ = rand(SVector{3})
     (u, v, w) = ntuple(_ -> round.(normalize(rand(SVector{3})), digits=2), Val(3))
-
-    # fns = (sphharm32 => ((:, :), (:, v), (u, v)),
-    #        sphharm33 => ((:, :, :), (:, :, w), (:, v, w), (u, v, w)))
-
-    # b = Vector{BenchmarkTools.Trial}(undef, mapreduce(length ∘ last, +, fns))
-
-    # i = 0
-    # for (fn, args_set) ∈ fns
-    #     println("Evaluating $fn at a random point on the sphere with")
-    #     for (n, args) ∈ enumerate(args_set)
-    #         println("$fn(n̂)$args")
-    #         b[i+=1] = @benchmark $fn(n̂)($args...) setup=(n̂=normalize(rand(SVector{3, Float64})))
-    #         println("  time = ", minimum(b[i].times))
-    #     end
-    # end
 
     println("Second order form")
     println("  all components -> 3x3 matrix")
@@ -605,7 +619,7 @@ bmarks = let
     @btime sphharm32(n̂[])(u[], v[]) setup=(n̂=$(Ref(n̂)); u=$(Ref(u)); v=$(Ref(v)))
     println()
 
-    println("Thrid order form")
+    println("Third order form")
     println("  all components -> 3x3x3 array")
     @btime SArray(sphharm33(n̂[])(:, :, :)) setup=(n̂=$(Ref(n̂));)
     println("  single contraction -> 3x3 matrix")
@@ -618,6 +632,7 @@ end;
 #+end_src
 
 It seems to be as good as we can expect.
+
 
 * Stokes-flow hydrodynamics
 
@@ -796,6 +811,45 @@ function sourcesink(x, ε)
 end
 #+end_src
 
+Rotlet (problems!)
+
+#+begin_src jupyter-julia
+using MultilinearMaps.Special: wedge
+
+let e = StdBasis{3}(Real)
+    L = rand(SVector{3})
+    x = rand(SVector{3})
+    wedge3 = MultilinearForm{3,3}(wedge)
+    # @btime $L × $x  # control
+    # @btime SArray($wedge3(:, $L, $x))   # pretty fast
+    # @btime -SArray($wedge3($L, :, $x))  # slower...
+    # @btime SArray($wedge3($L, $x, :))   # slower...
+
+    # Problem b/c wedge isn't guaranteed to return the same type
+    # if the order of arguments changes
+    @testset "Wedge" begin
+        @test eltype(wedge3(:,x,:)) == eltype(x)
+        @test eltype(wedge3(:,x,x)) == eltype(x)
+        @test_broken eltype(wedge3(:,:,x)) == eltype(x)
+    end
+
+end
+#+end_src
+
+#+begin_src jupyter-julia
+using MultilinearMaps.Special: wedge, _wedge
+
+let e = StdBasis{3}(Real)
+    L = rand(SVector{3})
+    x = rand(SVector{3})
+    V = SVector{3,Float64}
+    E = StdUnitVector{3,Bool,Int64}
+    @code_warntype wedge(e[1], L, x)
+    @btime Base.promote_op($wedge, $E, $V, $V)
+    @btime typeof(wedge($e[3], $L, $x))
+end
+#+end_src
+
 ** Evaluation at multiple points
 
 Stokeslet/stresslet at many points:
@@ -856,17 +910,29 @@ using CairoMakie
 
 # Multilinear map that reflects a vector through a plane normal to n
 reflect(n::AbstractVector) = MultilinearForm{2,3}(
-    (e,v) -> (e⋅v) - 2(e⋅n)*(n⋅v)  # 𝗜 - 2 𝐧 ⊗ 𝐧
+    (e1, e2) -> (e1 ⋅ e2) - 2*(e1 ⋅ n)*(n ⋅ e2)  # 𝗜 - 2 𝐧 ⊗ 𝐧
 )
+
 let e = StdBasis{3}(Real)
     @test materialize(SArray, reflect( normalize(SVector(0,1,0)) )(:, e[2])) == [0,-1,0]
 end
+
 let sb = StdBasis{3}(Real)
     function stokeslet_nostress(x, y, f, n)
-        y_img = materialize(typeof(y), reflect(n)(:,y))
-        f_refl = materialize(typeof(f), reflect(n)(:,f))
+        x_refl = materialize(typeof(x), reflect(n)(:, x))
+        y_refl = materialize(typeof(y), reflect(n)(:, y))
+        f_refl = materialize(typeof(f), reflect(n)(:, f))
 
-        stokeslet(x - y)(:, f) + stokeslet(x - y_img)(:, f_refl)
+        # Force reflected
+        u = stokeslet(x - y)(:, f) + stokeslet(x - y_refl)(:, f_refl)
+
+        # Velocity reflected
+        v = stokeslet(x - y)(:, f)
+        v_img = reflect(n)(:, SArray(stokeslet(x_refl - y)(:, f)))
+
+        @assert u == v + v_img
+
+        return v + v_img
     end
 
     n = SVector(0., 1, 0)
@@ -891,16 +957,26 @@ let 𝐞 = StdBasis{3}(Real)
     function wall_stokeslet(x, y, f, n)
         f_refl = materialize(typeof(f), reflect(n)(:, f))
         y_refl = materialize(typeof(y), reflect(n)(:, y))
+        x_refl = materialize(typeof(x), reflect(n)(:, x))
 
-        mmap = stokeslet(x - y)(:, f) -
-            stokeslet(x - y_refl)(:, f) +
+        # Image singularity way
+        u = stokeslet(x - y)(:, f)
+        u_img = -stokeslet(x - y_refl)(:, f) +
             2*(n⋅y) * stresslet(x - y_refl)(:, n, f_refl) -
             (n⋅y)^2 * sourcesink(x - y_refl)(:, f_refl)
 
-        materialize(SArray, mmap)
+        # Lorentz way
+        #   1) swap y <-> x (mind the gradients!)
+        #   2) swap force indices <-> velocity indices
+        v = u - stokeslet(x_refl - y)(f, :)
+        v_img0 = -2*(n⋅x) * stresslet(x_refl - y)(f, n, :) -
+            (n⋅x)^2 * sourcesink(x_refl - y)(f, :)
+        v_img = reflect(n)(:, v_img0)
+
+        materialize(SArray, v + v_img)
     end
 
-    f = normalize(SVector(rand(), rand(), 0.))  # SVector{3}(𝐞[1])
+    f = normalize(SVector(1., 1., 0.))  # SVector{3}(𝐞[1])
     n = SVector{3,Float64}(𝐞[2])
 
     velfield(x2d) = let x = SVector(x2d[1], x2d[2], 0.)
@@ -908,8 +984,60 @@ let 𝐞 = StdBasis{3}(Real)
     end
 
     (fig,ax,p) = streamplot(velfield, -3..3, -2..2, axis=(;aspect=DataAspect()))
-    # hlines!(ax, 0; color=:black)
+    hlines!(ax, 0; color=:black)
     display(fig)
+end
+#+end_src
+
+* The ε map
+
+#+begin_src jupyter-julia
+using Test
+using MultilinearMaps.Special
+using MultilinearMaps.Special: altsigns, swap_1st, swapeach_1st
+
+@testset "Alternating Map" begin
+    @testset "0D" begin @test wedge(1) == 1; end
+    @testset "1D" begin
+        sb = StdBasis{1}(Real)
+        @test wedge(sb[1]) === true
+        @test wedge([1]) === 1
+    end
+    @testset "2D" begin
+        sb = StdBasis{2}(Real)
+        for (ê1, ê2) ∈ Iterators.product((sb[1], [1,0]), (sb[2], [0,1]))
+            @test 1 == wedge(ê1, ê2) == -wedge(ê2, ê1)
+            @test 0 == wedge(ê1, ê1) == wedge(ê2, ê2)
+        end
+    end
+    @testset "3D" begin
+        sb = StdBasis{3}(Real)
+        ê = ([1,0,0], [0,1,0], [0,0,1])
+        @test 1 == wedge(ê[1], ê[2], ê[3]) == -wedge(ê[1], ê[3], ê[2])
+        @test 1 == -wedge(ê[2], ê[1], ê[3]) == wedge(ê[2], ê[3], ê[1])
+        @test 1 == wedge(ê[3], ê[1], ê[2]) == -wedge(ê[3], ê[2], ê[1])
+        @test 0 == wedge(ê[1], ê[1], ê[2]) == wedge(ê[1], ê[2], ê[2]) == wedge(ê[1], ê[1], ê[1])
+        for (ê1, ê2, ê3) ∈ Iterators.product((ê[1], [1,0,0]),
+                                         (ê[2], [0,1,0]),
+                                         (ê[3], [0,0,1]))
+            @test 1 == wedge(ê1, ê2, ê3) == -wedge(ê1, ê3, ê2)
+            @test 1 == -wedge(ê2, ê1, ê3) == wedge(ê2, ê3, ê1)
+            @test 1 == wedge(ê3, ê1, ê2) == -wedge(ê3, ê2, ê1)
+            @test 0 == wedge(ê1, ê1, ê2) == wedge(ê1, ê2, ê2) == wedge(ê2, ê1, ê2)
+            @test 0 == wedge(ê1, ê1, ê1) == wedge(ê2, ê2, ê2) == wedge(ê3, ê3, ê3)
+        end
+    end
+end;
+
+# let sb = StdBasis{3}(Real)
+#     wedge(sb[3], sb[2], sb[1])
+# end
+#+end_src
+
+#+begin_src jupyter-julia
+let (x,y,z) = ntuple(_ -> rand(SVector{3}), Val(3))
+    e = StdBasis{3}(Real)
+    wedge(e[3], e[2], e[1])
 end
 #+end_src
 

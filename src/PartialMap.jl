@@ -7,9 +7,10 @@ struct PartialMap{N, Sz<:Size{N}, T,
     args::TT
     function PartialMap(parent::MultilinearMap{M}, args0::Vararg{Any,M}) where M
         sz = _appliedsize(parent, args0)
+        # T = Base.promote_op((args...) -> _reapplyargs(parent, args0, args),
+        #                     map(dim -> StdUnitVector{known(dim)}, sz)...)
         args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
         T = typeof(_reapplyargs(parent, args0, args1))
-        # T = promote_eltype(Bool, parent, _removetype(Colon, args0)...)
         new{length(sz), typeof(sz), T, typeof(parent), typeof(args0)}(parent, args0)
     end
 end
@@ -22,7 +23,7 @@ end
     arg isa Colon ? (dim, _appliedsize(sz, args)...) : _appliedsize(sz, args)
 
 # Returns the set of arguments to be reapplied to the parent of a `PartialMap`
-# when the `PartialMap` is applied to some arguments.  The first arguments is a
+# when the `PartialMap` is applied to some arguments.  The first argument is a
 # tuple of the original arguments given when the `PartialMap` was created, and
 # the second argument is a tuple of the "new" arguments to be applied.
 @inline _reapplyargs(::Tuple{}, ::Tuple{}) = ()

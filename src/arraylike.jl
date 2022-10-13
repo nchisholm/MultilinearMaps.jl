@@ -36,7 +36,7 @@ Base.IndexStyle(mf::MultilinearMap) = Base.IndexStyle(typeof(mf))
     _getindex(inbounds_safety(), f, I)
 
 @inline _getindex(✓::Safety, f::MultilinearMap{N}, I::Vararg{Int,N}) where N =
-    f(map((L,i) -> StdUnitVector{known(L)}(✓, i), Arr.size(f), I)...)
+    f(map((L,i) -> StdUnitVector{known(L)}(i, ✓), Arr.size(f), I)...)
 
 @inline _getindex(✓::Safety, f::MultilinearMap{N}, I::CartesianIndex{N}) where N =
     _getindex(✓, f, Tuple(I)...)

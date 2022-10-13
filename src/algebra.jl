@@ -55,11 +55,13 @@ struct Sum{N, Sz<:Size{N}, T, MMs<:TupleN{MultilinearMap{N,Sz}}} <: MultilinearM
     operands::MMs
     function Sum(fs::Vararg{MultilinearMap})
         sz = samesize(fs...)
+        # T = Base.promote_op((args...) -> _eval_sum(fs, args...),
+        #                     map(dim -> StdUnitVector{known(dim)}, sz)...)
         args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
         T = typeof(_eval_sum(fs, args1))                 # determine output type
-        # T = promote_eltype(fs...) is tempting but this doesn't work generally
-        # because, e.g., promote_type(Bool, Bool) = Bool but
-        #     true + true = 1::Int
+        # using `T = promote_eltype(fs...)` is tempting but does not work
+        # generally because, e.g., `promote_type(Bool, Bool) = Bool` but
+        #     true + true = 2::Int
         new{length(sz), typeof(sz), T, typeof(fs)}(fs)
     end
 end

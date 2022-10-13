@@ -8,7 +8,7 @@ abstract type MultilinearMap{N, Sz<:SizeS{N}, T} end
     AtomicMultilinearMap{N,Sz}(f)
 
 # TODO docstring
-@inline MultilinearMap(::Sz, f) where {N, Sz<:SizeS{N} #= Size =#} =
+@inline MultilinearMap(f, ::Sz) where {N, Sz<:SizeS{N} #= Size =#} =
     AtomicMultilinearMap{N, Sz}(f)
 
 const MultilinearForm{N,D} = MultilinearMap{N, CubeSize{N,D}}
@@ -28,7 +28,7 @@ struct PartialApply <: ApplyMode end
 @inline (f::MultilinearMap{N})(args::Vararg{Any,N}) where N =
     f(ApplyMode(args...), args...)
 
-# Wrong argument count fallback
+# Fallback if wrong argument count
 @noinline (f::MultilinearMap)(args...) =
     throw(ArgumentError("expected $(ndims(f)) arguments but got $(length(args)) of them"))
 
@@ -56,13 +56,13 @@ struct AtomicMultilinearMap{N, Sz<:Size{N}, T, F} <: MultilinearMap{N,Sz,T}
     # NOTE: only allow fully static sizes for now
     function AtomicMultilinearMap{N, Sz}(impl::F) where {N, Sz<:SizeS{N}, F}
         sz::Sz = static(known(Sz))            # convert Type{<:Size} -> sz::Size
+        # T = Base.promote_op(impl, map(dim -> StdUnitVector{known(dim)}, sz)...)
         args1 = map(dim -> StdUnitVector{known(dim)}(1), sz)
         T = typeof(impl(args1...))            # determine output type
         new{N, Sz, T, F}(impl)
     end
 end
 
-# @inline (f::AtomicMultilinearMap{0})(::Args{0}) = f.impl()  # disambiguate
 @inline (f::AtomicMultilinearMap)(::FullApply, args...) = f.impl(args...)
 
 function Base.show(io::IO, f::AtomicMultilinearMap)

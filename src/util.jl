@@ -57,6 +57,9 @@ const Safety = Union{Safe,Unsafe}
 @inline inbounds_safety() = (@boundscheck return SAFE; UNSAFE)
 
 
+const CanonicalInt = Union{Int, StaticInt}
+
+const Length = Union{StaticInt, Int}
 # Static or dynamic size
 const Size = TupleN{Union{<:StaticInt,Int}}
 # Competely static size
@@ -87,6 +90,7 @@ end
 
 # Can get rid of first method if ArrayInterface works around problems finding
 # known sizes of container types
+# TODO: but maybe consider avoiding trying to size UnionAll types
 @inline _size(T::Type) = _determinant_size(T)
 @inline _size(a) = Arr.size(a)
 
@@ -101,6 +105,28 @@ end
     throw(DimensionMismatch("Sizes $sizes of inputs do not match"))
 end
 
+"""
+    samelength(as...)
+
+Return the size of `as` if they all compare equal (==).  Otherwise throw a
+`DimensionMismatch`. (The dynamic/static status of each dimension is not
+considered.)
+"""
+function samelength(as...)
+    l0 = Arr.length(first(as))
+    _lengths_match(l0, tail(as)...) || _throw_length_mismatch(as...)
+    return l0
+end
+
+@inline _lengths_match(l0::CanonicalInt, ls::CanonicalInt...) = all(==(l0), ls)
+@inline _lengths_match(l0::CanonicalInt, as...) =
+    _lengths_match(l0, map(Arr.length, as)...)
+@inline _lengths_match(a, as...) = _lengths_match(Arr.length(a), as...)
+
+@noinline function _throw_length_mismatch(as...)
+    ls = map(dynamic ∘ Arr.length, as)
+    throw(DimensionMismatch("lengths $ls of inputs do not match"))
+end
 
 """
 Fill an `N`-dimensional array `arr` using a function `f` of the `N` indices.
