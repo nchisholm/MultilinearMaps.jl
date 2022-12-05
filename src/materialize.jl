@@ -13,7 +13,7 @@ materialize!(tgt::AbstractArray, f::MultilinearMap) =
 
 # Sequantially fills `tgt` with the components of `f`.
 @generated function _unsafe_materialize!(tgt::AbstractArray{<:Any, N},
-                                         f::MultilinearMap{N}) where N
+                                         f::MultilinearMap{<:Dims{N}}) where N
     quote
         @nloops $N i tgt begin
             # tgt[i,j,k,...] = f[i,j,k,...]

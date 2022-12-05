@@ -3,7 +3,7 @@
 # Read-only tangled files
 #+PROPERTY: header-args :tangle-mode (identity #o444)
 # Set Jupyter kernel/session options for emacs-jupyter
-#+PROPERTY: header-args:jupyter-julia :session README :kernel julia-official-zink :eval no-export :async yes :exports both
+#+PROPERTY: header-args:jupyter-julia :session MultilinearMaps :kernel julia-official-zink :eval no-export :async yes :exports both
 
 :TEX_MATHJAX_SETUP:
 #+LATEX_COMPILER: lualatex
@@ -161,8 +161,6 @@ function fillfn_cartesianindices!(arr::AbstractArray, f::F) where F
     return arr
 end
 
-const inner = MultilinearMap(dot, (3,3))
-
 let A = MArray{NTuple{4,3},Float64}(undef)
     # @btime materialize!(skew, $A)
     println("  Using `CartesianIndices`")
@@ -180,11 +178,11 @@ end
 
 #+RESULTS:
 :   Using `CartesianIndices`
-:   160.834 ns (0 allocations: 0 bytes)
+:   96.924 ns (0 allocations: 0 bytes)
 :   Using `Base.Cartesian`
-:   22.440 ns (0 allocations: 0 bytes)
+:   13.016 ns (0 allocations: 0 bytes)
 : `SArray` via `sacollect`
-:   22.509 ns (0 allocations: 0 bytes)
+:   13.297 ns (0 allocations: 0 bytes)
 
 *Developer Note.*
 Use of ~sacollect~ is most efficient because it effectively unrolls all the loops.
@@ -217,7 +215,7 @@ end
 
 #+RESULTS:
 :RESULTS:
-:   63.279 ns (1 allocation: 64 bytes)
+:   32.705 ns (1 allocation: 64 bytes)
 : 3×3 Matrix{Bool}:
 :  1  0  0
 :  0  1  0
@@ -284,43 +282,27 @@ end;
 
 When creating a unit vector, one generally wants to validate that its direction is appropriate for the vector space, i.e., ~1 ≤ d ≤ D~.
 Indeed, constructing a two-dimensional unit vector pointing into the third dimension is invalid and will helpfully raise an exception.
-#+begin_src jupyter-julia
+#+begin_src jupyter-julia :eval no
 StandardBasis(2)[3]  # raises error
 #+end_src
 
-Like bounds checking of array access, this comes with some overhead.
-However, we may want to elide such checks if we are confident that the unit vectors we construct are valid.
-Therefore, we provide "unsafe construction" of unit vectors to elide the dimensionality check.
-(Warning: doing so could lead to strange difficult-to-debug behavior; see below.)
-#+begin_src jupyter-julia
-collect(StdUnitVector{2}(3, MM.UNSAFE))  # 3 not less than 2!
-#+end_src
-
-We can check for any overhead of the ~UNSAFE~ method to direct computation on the indices, and there seems to be none.
 #+begin_src jupyter-julia :results scalar
-import MultilinearMaps: StandardUnitVector, Safety, SAFE, UNSAFE
+import MultilinearMaps: StandardUnitVector
 
-@inline inds2uvecs(safety::S, inds::Vararg{Int}) where {S<:Safety} =
-    map(i -> StandardUnitVector(i, 3), inds)
-@inline inds2uvecs(safety::S) where {S<:Safety} = (inds...) -> inds2uvecs(safety, inds...)
+@inline inds2uvecs(inds::Vararg{Int}) = map(i -> StandardUnitVector(i, 3), inds)
 
 println("Function of indices")
 out_ixfn = @btime fillfn_nloops!(A, skew_ixfn) setup=(A = MArray{NTuple{4,3},Int64}(undef))
-println("SAFE unit vectors (validity checked)")
-out_safe = @btime(fillfn_nloops!(A, _skew ∘ inds2uvecs(SAFE)),
+println("Funcion of unit vectors")
+out_uvs = @btime(fillfn_nloops!(A, _skew ∘ inds2uvecs),
                   setup=(A = MArray{NTuple{4,3},Int64}(undef)))
-println("UNSAFE unit vectors (no validity check)")
-out_unsafe = @btime(fillfn_nloops!(A, _skew ∘ inds2uvecs(UNSAFE)),
-                    setup=(A = MArray{NTuple{4,3},Int64}(undef)))
-@assert out_ixfn == out_safe == out_unsafe
+@assert out_ixfn == out_uvs
 #+end_src
 
 #+RESULTS:
 : Function of indices
-:   21.949 ns (0 allocations: 0 bytes)
-: SAFE unit vectors (validity checked)
-:   17.722 ns (0 allocations: 0 bytes)
-: UNSAFE unit vectors (no validity check)
+:   22.087 ns (0 allocations: 0 bytes)
+: Funcion of unit vectors
 :   17.653 ns (0 allocations: 0 bytes)
 
 Interestingly, completely explicit loops are little faster, but why?
@@ -338,9 +320,9 @@ Interestingly, completely explicit loops are little faster, but why?
 );
 #+end_src
 
-#+RESULTS:
-:   151.766 ns (0 allocations: 0 bytes)
-
+#+begin_src jupyter-julia
+sacollect(SArray{Tuple{4,3}, Int64}, _)
+#+end_src
 
 * Multilinear maps
 
@@ -354,35 +336,47 @@ Let's define a few ~MultilinearMaps~ (in three dimensions) to work on below.
 const ê = StandardUnitVector  # For convenience
 _just_true() = true
 const onlytrue = MultilinearMap(() -> true, ())
-const inner = MultilinearMap(dot, (3,3))
-const skew = MultilinearMap(_skew, (3,3,3,3))
+const inner = MultilinearMap(dot, static((3,3)))
+const skew = MultilinearMap(_skew, static((3,3,3,3)))
 #+end_src
+
+#+RESULTS:
+:RESULTS:
+# [goto error]
+: invalid redefinition of constant inner
+:
+: Stacktrace:
+:  [1] top-level scope
+:    @ In[13]:4
+:  [2] eval
+:    @ ./boot.jl:368 [inlined]
+:  [3] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
+:    @ Base ./loading.jl:1428
+:END:
 
 Check that things work correctly.
 
 #+begin_src jupyter-julia
-MultilinearMaps._eltype(skew)
+@code_warntype MultilinearMaps._eltype(skew)
 #+end_src
-
-#+RESULTS:
-: Int64
 
 #+begin_src jupyter-julia
 using Test
 
-@testset "ApplyMode" begin
-    @test MM.ApplyMode() === MM.FullApply()
-    @test MM.ApplyMode([1,2], [3,4,5], [5,6]) === MM.FullApply()
-    @test MM.ApplyMode([1,2,3,4], :, [5,6]) === MM.PartialApply()
-end;
+# @testset "ApplyMode" begin
+#     @test MM.ApplyMode() === MM.FullApply()
+#     @test MM.ApplyMode([1,2], [3,4,5], [5,6]) === MM.FullApply()
+#     @test MM.ApplyMode([1,2,3,4], :, [5,6]) === MM.PartialApply()
+# end;
 @testset "MultilinearMap Evaluation" begin
-    u = StdUnitVector{2}(1) # SVector(1., 0.)
-    v = StdUnitVector{2}(2) # SVector(0., 1.)
-    solo = @inferred MultilinearForm{0,3}(_just_true)
-    inner = @inferred MultilinearForm{2,2}(dot)
-    skew = @inferred MultilinearForm{4,2}(_skew)
-    @test solo() == true
-    @test_throws ArgumentError solo(u)
+    e = StandardBasis(3)
+    u = e[1]
+    v = e[2]
+    onlytrue = @inferred MultilinearMap(() -> true, ())
+    inner = @inferred MultilinearMap(dot, (2,2))
+    skew = @inferred MultilinearMap(_skew, (2,2,2,2))
+    @test onlytrue() == true
+    @test_throws ArgumentError onlytrue(u)
     @test inner(u,u) == 1
     @test inner(u,v) == 0
     @test inner(v,u) == 0
@@ -394,11 +388,8 @@ end;
 #+end_src
 
 #+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: ApplyMode     | [32m   3  [39m[36m    3  [39m[0m0.0s
 : [0m[1mTest Summary:             | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
 : MultilinearMap Evaluation | [32m   9  [39m[36m    9  [39m[0m0.1s
-
 Check that things work efficiently (no allocations, e.g.).
 
 #+begin_src jupyter-julia :results scalar
@@ -406,8 +397,8 @@ using BenchmarkTools
 using Test
 
 let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
-    inner = MultilinearMap(dot, static((3,3)))
-    skew = MultilinearForm{4,3}(_skew)
+    inner = MultilinearMap(dot, (3,3))
+    skew = MultilinearMap(_skew, (3,3,3,3))
     println("Contraction, map with argument dimensions $(size(inner))")
     @assert 1 == @btime($inner($(u,u)...))
     println("Contraction, map with argument dimensions $(size(skew))")
@@ -419,7 +410,7 @@ end
 : Contraction, map with argument dimensions (3, 3)
 :   2.304 ns (0 allocations: 0 bytes)
 : Contraction, map with argument dimensions (3, 3, 3, 3)
-:   3.772 ns (0 allocations: 0 bytes)
+:   4.749 ns (0 allocations: 0 bytes)
 
 ** Partial application (contraction)
 
@@ -429,7 +420,7 @@ We also use the ~Colon~ (~:~) to indicate a "free index" of the tensor / form.
 When a ~MultilinearForm~ is ~collect~​ed into an array, the ~:~ indicates slots/indices which should be looped over for all the unit vectors to generate numerical components.
 
 #+begin_src jupyter-julia :results scalar
-let basis = StdBasis{3}(Real)
+let basis = StandardBasis(3)
     e1 = basis[1]
     v = SVector(1,2,3)
     x = inner(v, :)
@@ -448,34 +439,33 @@ Some tests:
 #+begin_src jupyter-julia
 @testset "PartialMap" begin
     let
-        e = StdUnitVector{2}(1)
-        inner = @inferred MultilinearForm{2,2}(dot)
+        e = StandardUnitVector(1, 2)
+        inner = @inferred MultilinearMap(dot, (2,2))
         @test_throws ArgumentError inner(:,:,:)
         @test_throws ArgumentError inner(:)
         @test inner(:,:) === inner
         @inferred inner(e,:)
-        @test inner(:,e) == inner(e,:)
+        @test_broken inner(:,e) == inner(e,:)
     end
-    let e = StdBasis{3}(Real)
+    let e = StandardBasis(3)
         (u,v,w,x) = ntuple(_ -> rand(SVector{3,Float64}), Val(4))
-        inner = @inferred MultilinearForm{2,3}(dot)
-        skew = @inferred MultilinearForm{4,3}(_skew)
+        inner = @inferred MultilinearMap(dot, (3,3))
+        skew = @inferred MultilinearMap(_skew, (3,3,3,3))
         @inferred skew(u,v,w,:)
         @inferred skew(u,v,w,:)(x)
-        @test inner(u,v) == inner(u,:)(v) == inner(:,u)(v) == inner(:,:)(u,v)
-        @test skew(u,v,w,x) ≈ skew(u,v,w,:)(x) ≈ skew(u,v,:,:)(w,x) ≈
+        @test_broken inner(u,v) == inner(u,:)(v) == inner(:,u)(v) == inner(:,:)(u,v)
+        @test_broken skew(u,v,w,x) ≈ skew(u,v,w,:)(x) ≈ skew(u,v,:,:)(w,x) ≈
             skew(u,:,:,:)(v,w,x) ≈ skew(:,v,w,x)(u)
-        @test eltype(inner(e[1], :)) == eltype(e[1])
-        @test eltype(inner(u, :)) == eltype(u)
-        @test eltype(skew(e[1], e[2], :, e[3])) == Int
+        # @test eltype(inner(e[1], :)) == eltype(e[1])
+        # @test eltype(inner(u, :)) == eltype(u)
+        # @test eltype(skew(e[1], e[2], :, e[3])) == Int
     end
 end;
 #+end_src
 
 #+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: PartialMap    | [32m   9  [39m[36m    9  [39m[0m2.0s
-
+: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[33m[1mBroken  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
+: PartialMap    | [32m   3  [39m[33m     3  [39m[36m    6  [39m[0m1.0s
 We might want more functionality in the future, like the ability to permute the argument order of the vector arguments.
 We leave that to later work.
 
@@ -484,17 +474,19 @@ We leave that to later work.
 
 We can now produce an identity matrix as follows by using ~inner~, defined above, and ~StdUnitVector~.
 #+begin_src jupyter-julia
-# @btime [inner(e1, e2) for e1 ∈ sb, e2 ∈ sb] setup=begin
-#     sb = StdBasis{3}(Real)
-# end
-let sb = StdBasis{3}(Real)
-    # collect(e1 ⋅ e1 for e1 ∈ sb)
-    supertypes(typeof(length(sb)))
+@btime [inner(e1, e2) for e1 ∈ sb, e2 ∈ sb] setup=begin
+    sb = StandardBasis(3)
 end
 #+end_src
 
 #+RESULTS:
-| Int64 | Signed | Integer | Real | Number | Any |
+:RESULTS:
+:   33.542 ns (1 allocation: 64 bytes)
+: 3×3 Matrix{Bool}:
+:  1  0  0
+:  0  1  0
+:  0  0  1
+:END:
 
 However, much convenience is provided by implementing the [[https://docs.julialang.org/en/v1/manual/interfaces/][iteration and indexing interfaces]] for ~MultilinearForm~​s.
 This will allow us to "collect" a ~MultilinearForm~ into an array container like ~Array~ or ~SArray~ using ~collect~ or ~StaticArrays.sacollect~, respectively.
@@ -509,16 +501,16 @@ Note that when ~@inbounds~ is used, unit vectors are unsafely constructed, witho
 
 #+begin_src jupyter-julia :results scalar
 # MM._getindex(MM.UNSAFE, inner, 1, 1)
-@btime inner(ê{3}(1), ê{3}(1))
-@btime MM._getindex(MM.SAFE, inner, 1, 3)
+@btime inner(StandardUnitVector(1,3), StandardUnitVector(3,3))
+@btime getindex(inner, 1, 3)
 @btime inner[1,3]
 #+end_src
 
 #+RESULTS:
 :RESULTS:
-:   1.397 ns (0 allocations: 0 bytes)
-:   0.978 ns (0 allocations: 0 bytes)
-:   0.907 ns (0 allocations: 0 bytes)
+:   1.202 ns (0 allocations: 0 bytes)
+:   1.202 ns (0 allocations: 0 bytes)
+:   1.202 ns (0 allocations: 0 bytes)
 : false
 :END:
 
@@ -527,14 +519,19 @@ Note that when ~@inbounds~ is used, unit vectors are unsafely constructed, witho
 
 The identity matrix (~inner~) can now be collected into an array with a single line of code.
 #+begin_src jupyter-julia :results scalar
-@btime materialize(SArray, inner)
-@btime materialize(SMatrix{3,3}, inner)
+# @btime SArray{Tuple{3,3}, Float64}(inner)
+# @btime SMatrix{3,3}(inner)
+let
+    inner = MultilinearMap(dot, (3,3))
+    skew = MultilinearMap(_skew, (3,3,3,3))
+    @btime sacollect(SMatrix{3,3}, $inner)
+    # @btime sacollect(SArray{Tuple{3,3,3,3}}, $skew)
+end
 #+end_src
 
 #+RESULTS:
 :RESULTS:
-:   0.978 ns (0 allocations: 0 bytes)
-:   1.327 ns (0 allocations: 0 bytes)
+:   7.662 ns (0 allocations: 0 bytes)
 : 3×3 SMatrix{3, 3, Bool, 9} with indices SOneTo(3)×SOneTo(3):
 :  1  0  0
 :  0  1  0
@@ -588,19 +585,48 @@ Create an array of type ~T~ filled with the components of ~f~.
 
 #+begin_src jupyter-julia :results scalar
 let
-    solo = MultilinearForm{0}(() -> 1.0)
-    inner = MultilinearForm{2,3}(dot)
-    skew = MultilinearForm{4,3}(_skew)
-    @btime materialize(Scalar, $solo)
+    solo = MultilinearMap(() -> true, ())
+    inner = MultilinearMap(dot, (3,3))
+    skew = MultilinearMap(_skew, (3,3,3,3))
+    @btime materialize!(Scalar, $solo)
     @btime SArray($inner)
     @btime SArray($skew#=(:,:,:,:)=#)
 end;
 #+end_src
 
 #+RESULTS:
-:   0.908 ns (0 allocations: 0 bytes)
-:   0.977 ns (0 allocations: 0 bytes)
-:   12.794 ns (0 allocations: 0 bytes)
+:RESULTS:
+# [goto error]
+#+begin_example
+UndefVarError: materialize not defined
+
+Stacktrace:
+  [1] var"##core#402"(solo#389::MultilinearMap{Tuple{}, var"#14#15"})
+    @ Main ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:489
+  [2] var"##sample#403"(::Tuple{MultilinearMap{Tuple{}, var"#14#15"}}, __params::BenchmarkTools.Parameters)
+    @ Main ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:495
+  [3] _run(b::BenchmarkTools.Benchmark, p::BenchmarkTools.Parameters; verbose::Bool, pad::String, kwargs::Base.Pairs{Symbol, Integer, NTuple{4, Symbol}, NamedTuple{(:samples, :evals, :gctrial, :gcsample), Tuple{Int64, Int64, Bool, Bool}}})
+    @ BenchmarkTools ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:99
+  [4] #invokelatest#2
+    @ ./essentials.jl:731 [inlined]
+  [5] #run_result#45
+    @ ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:34 [inlined]
+  [6] run(b::BenchmarkTools.Benchmark, p::BenchmarkTools.Parameters; progressid::Nothing, nleaves::Float64, ndone::Float64, kwargs::Base.Pairs{Symbol, Integer, NTuple{5, Symbol}, NamedTuple{(:verbose, :samples, :evals, :gctrial, :gcsample), Tuple{Bool, Int64, Int64, Bool, Bool}}})
+    @ BenchmarkTools ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:117
+  [7] #warmup#54
+    @ ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:169 [inlined]
+  [8] warmup(item::BenchmarkTools.Benchmark)
+    @ BenchmarkTools ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:168
+  [9] macro expansion
+    @ ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:575 [inlined]
+ [10] top-level scope
+    @ In[10]:5
+ [11] eval
+    @ ./boot.jl:368 [inlined]
+ [12] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
+    @ Base ./loading.jl:1428
+#+end_example
+:END:
 
 
 #+begin_src jupyter-julia

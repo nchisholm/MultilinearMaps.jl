@@ -1,7 +1,13 @@
-using Base.Cartesian
-
-
 const TupleN{T,N} = NTuple{N,T}
+
+const Dim = Union{StaticInt, Int}
+const SDim = StaticInt
+const Dims = TupleN{Dim}
+const SDims = TupleN{SDim}
+
+const SOneTo{L} = Arr.OptionallyStaticUnitRange{StaticInt{1}, StaticInt{L}}
+const Axes{N} = NTuple{N,AbstractUnitRange}
+
 
 # Concatenate ("splat") n tuples into one big tuple
 @inline tuplejoin(t::Tuple) = joinargs(t...)
@@ -43,29 +49,8 @@ const Maybe{T} = Union{T,Nothing}
 # @inline maybe(f, args...) = f(args...)
 # @inline maybe(_, ::Vararg{Maybe}) = nothing
 
-@inline apply(args::Tuple, f::F) where F = f(args...)
-@inline apply(args::Tuple) = f -> apply(args, f)
-
-
-# Types to flag safe and unsafe methods
-struct Safe end;   const SAFE = Safe()
-struct Unsafe end; const UNSAFE = Unsafe()
-# Methods marked `UNSAFE` may produce unpredictable behavior
-const Safety = Union{Safe,Unsafe}
-
-# Acts with @inbounds as a safety switch
-@inline inbounds_safety() = (@boundscheck return SAFE; UNSAFE)
-
-
-const CanonicalInt = Union{Int, StaticInt}
-
-const Length = Union{StaticInt, Int}
-# Static or dynamic size
-const Size = TupleN{Union{<:StaticInt,Int}}
-# Competely static size
-const SizeS = TupleN{StaticInt}
-# Static size with all same dimensions
-const CubeSize{N,D} = NTuple{N,StaticInt{D}}
+# @inline apply(args::Tuple, f::F) where F = f(args...)
+# @inline apply(args::Tuple) = f -> apply(args, f)
 
 
 """
@@ -77,12 +62,12 @@ considered.)
 """
 @inline function samesize(as...)
     sz = _size(first(as))
-    _sizes_match(sz, tail(as)...) || _throw_size_mismatch(as...)
+    _sizes_match(sz, Base.tail(as)...) || _throw_size_mismatch(as...)
     return sz
 end
 
-@inline _sizes_match(sz0::Size, szs::Size...) = all(==(sz0), szs)
-@inline _sizes_match(sz::Size, as...) = _sizes_match(sz, map(_size, as)...)
+@inline _sizes_match(sz0::Dims, szs::Dims...) = all(==(sz0), szs)
+@inline _sizes_match(sz::Dims, as...) = _sizes_match(sz, map(_size, as)...)
 @inline function _sizes_match(a, as...)
     sz = _size(a)
     _sizes_match(sz, as...)
@@ -118,8 +103,8 @@ function samelength(as...)
     return l0
 end
 
-@inline _lengths_match(l0::CanonicalInt, ls::CanonicalInt...) = all(==(l0), ls)
-@inline _lengths_match(l0::CanonicalInt, as...) =
+@inline _lengths_match(l0::Dim, ls::Dim...) = all(==(l0), ls)
+@inline _lengths_match(l0::Dim, as...) =
     _lengths_match(l0, map(Arr.length, as)...)
 @inline _lengths_match(a, as...) = _lengths_match(Arr.length(a), as...)
 

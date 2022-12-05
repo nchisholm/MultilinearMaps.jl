@@ -1,10 +1,7 @@
-import ArrayInterface as Arr
-
 using .FixedFunctions: Fix, Slot
 
-export MultilinearMap
+export MultilinearMap, arity
 
-const TupleN{T,N} = NTuple{N,T}
 const VecOrColon = Union{AbstractVector, Colon}
 
 # abstract type AbstractMultilinearMap{N} end
@@ -15,46 +12,61 @@ Wraps a function or callable value `impl` that should have a method
 its arguments, i.e., linear when all of the arguments but one argument is held
 fixed.
 """
-struct MultilinearMap{N,F}  # <: AbstractMultilinearMap{N}
+struct MultilinearMap{Sz<:Dims,F}  # <: AbstractMultilinearMap{N}
     impl::F
-    size::Dims{N}
-    # NOTE: only allow fully static sizes for now
-    function MultilinearMap(impl::F, dims::NTuple{N,Integer}) where {N, F}
-        # M = slotcount(impl)
-        # M == N || throw(DimensionMismatch("Number of dimensions $N does not match arity $M of function"))
-        all(≥(0), dims) || throw(DomainError(dims, "Dimension lengths must be nonnegative integers"))
-        new{N,F}(impl, dims)
+    dims::Sz
+    function MultilinearMap(impl::F, dims::Sz) where {Sz<:Dims, F}
+        # T = Base.promote_op(f, ntuple(_ -> StdUnitVec, Val(N))...)
+        # @assert isconcretetype(T)
+        any(<(0), dims) && throw(ArgumentError("invalid dimensions"))
+        new{Sz,F}(impl, dims)
     end
 end
-# TODO: maybe allow one or more of the size to be `nothing`, and allow the map
-# to represent an array of arbitrary size the `nothing` dimensions
 
-MultilinearMap(f::MultilinearMap, dims=size(f)) = MultilinearMap(f.impl, dims)
+MultilinearMap(f::MultilinearMap, dims=Arr.size(f)) =
+    MultilinearMap(f.impl, dims)
 MultilinearMap(impl, dims::Integer...) = MultilinearMap(impl, dims)
-# MultilinearMap(impl::Function, dims::TupleN{Integer}) =
-#     MultilinearMap(Fix(impl, map(_ -> Slot(), dims)), dims)
 
-Base.IteratorSize(::Type{MultilinearMap{N}}) where N = Base.HasShape{N}()
-Base.IteratorEltype(::Type{MultilinearMap}) = Base.EltypeUnknown()
+arity(::Type{<:MultilinearMap{<:Dims{N}}}) where N = N
+arity(f::MultilinearMap) = arity(typeof(f))
+
+Base.@assume_effects :foldable Arr.axes_types(::Type{<:MultilinearMap{Sz}}) where {Sz<:Dims} =
+    Tuple{map(T -> Static.OptionallyStaticUnitRange{StaticInt{1}, T}, fieldtypes(Sz))...}
+Arr.axes(f::MultilinearMap) = map(i -> static(1):i, f.dims)
+Arr.size(f::MultilinearMap) = f.dims
+Arr.length(f::MultilinearMap) = prod(Arr.size(f))
+
+Base.IteratorSize(::Type{F}) where {F<:MultilinearMap} =
+    Base.HasShape{arity(F)}()
+Base.IteratorEltype(::Type{<:MultilinearMap}) = Base.EltypeUnknown()
 Base.IndexStyle(::Type{<:MultilinearMap}) = IndexCartesian()
-Base.ndims(::Type{<:MultilinearMap{N}}) where N = N
-Base.ndims(f::MultilinearMap) = Base.ndims(typeof(f))
-Base.size(f::MultilinearMap) = f.size
-Base.size(f::MultilinearMap, dim) = size(f)[dim]
-Base.length(f::MultilinearMap) = prod(size(f))
 
-_eltype(f::MultilinearMap{N}) where N =
-    Base.promote_op(f.impl, ntuple(_ -> StdUnitVec, Val(N))...)
+Base.ndims(::Type{F}) where {F<:MultilinearMap} = arity(F)
+Base.ndims(f::MultilinearMap) = arity(f)
+Base.size(f::MultilinearMap) = dynamic(Arr.size(f))
+# Base.size(f::MultilinearMap, dim) = dynamic(Arr.size(f, dim))
+Base.length(f::MultilinearMap) = dynamic(Arr.length(f))
 
-Base.@propagate_inbounds function Base.getindex(f::MultilinearMap, I::Vararg{Int,N}) where N
-    es = ntuple(k -> StdUnitVec(size(f,k), I[k]), Val(N))  # basis vectors
-    f(es...)
+# NOTE: why doesn't ndims return static value in ArrayInterface?
+# NOTE: why not pull from Base.HasShape for default ndims?
+
+# XXX: Should we avoid `promote_op`?
+_eltype(f::MultilinearMap) = Base.promote_op(f, ntuple(_ -> StdUnitVec{Int}, Val(arity(f)))...)
+
+Base.@propagate_inbounds function Base.getindex(f::MultilinearMap{<:Dims{N}}, I::Vararg{Int,N}) where N
+    # TODO: handle colons
+    f(map(StdUnitVec, I, Arr.size(f))...)
 end
 
-(f::MultilinearMap{N})(args::Vararg{AbstractVector,N}) where N = f.impl(args...)
-(f::MultilinearMap{N})(::Vararg{Colon,N}) where N = f   # identity op
+Base.@propagate_inbounds Base.getindex(f::MultilinearMap{<:Dims{N}}, I::CartesianIndex{N}) where N =
+    f[Tuple(I)...]
 
-function (f::MultilinearMap{N})(args::Vararg{VecOrColon,N}) where N
+@inline (f::MultilinearMap{<:Dims{0}})() = f.impl()
+@inline (f::MultilinearMap{<:Dims{N}})(args::Vararg{AbstractVector,N}) where N =
+    f.impl(args...)
+@inline (f::MultilinearMap{<:Dims{N}})(::Vararg{Colon,N}) where N = f   # identity op
+
+function (f::MultilinearMap{<:Dims{N}})(args::Vararg{VecOrColon,N}) where N
     size1 = _appliedsize(f, args)
     args1 = _colons_to_slots(args)
     f1 = Fix(f.impl, args1)
@@ -62,14 +74,39 @@ function (f::MultilinearMap{N})(args::Vararg{VecOrColon,N}) where N
     MultilinearMap(f1, size1)
 end
 
+@noinline (f::MultilinearMap)(args::Vararg{VecOrColon}) =
+    throw(ArgumentError("$(length(args)) arguments provided to a MultilinearMap of arity $(arity(f))"))
+
 @inline _appliedsize(f::MultilinearMap, args::Tuple) =
-    _appliedsize(size(f), args)
+    _appliedsize(Arr.size(f), args)
 @inline _appliedsize(::Tuple{}, ::Tuple{}) = ()
-@inline _appliedsize((dim, sz...)::Dims{N}, (arg, args...)::NTuple{N,Any}) where N =
+@inline _appliedsize((dim, sz...)::Dims{N}, (arg, args...)::NTuple{N,VecOrColon}) where N =
     arg isa Colon ? (dim, _appliedsize(sz, args)...) : _appliedsize(sz, args)
 # Do we need to specialize on N or will that create unnecessary overhead?
 
 @inline _colons_to_slots(::Tuple{}) = ()
-@inline _colons_to_slots((arg, args...)::Tuple) =
+@inline _colons_to_slots((arg, args...)::TupleN{VecOrColon}) =
     (arg isa Colon ? Slot() : arg, _colons_to_slots(args)...)
     #    ^ should we use `isa` here or rely on dispatch?
+
+Base.CartesianIndices(f::MultilinearMap) = CartesianIndices(axes(f))
+Base.firstindex(f::MultilinearMap) = first(CartesianIndices(f))
+Base.lastindex(f::MultilinearMap) = last(CartesianIndices(f))
+
+# NOTE inlining is important to performance here
+@inline function Base.iterate(f::MultilinearMap)
+    # Piggy-back on iterate(::CartesianIndices)
+    (I, state) = iterate(CartesianIndices(f))
+    return (f[I], state)
+end
+
+@inline function Base.iterate(f::MultilinearMap, state)
+    maybe(((I′, state′),) -> (f[I′], state′),
+          iterate(CartesianIndices(f), state))
+end
+
+Base.show(io::IO, f::MultilinearMap) =
+    print(io, "MultilinearMap(", f.impl, ", ", f.dims, ")")
+
+Base.show(io::IO, ::MIME"text/plain", f::MultilinearMap) =
+    print(io, join(f.dims, "×"), " MultilinearMap")

@@ -1,34 +1,40 @@
-import Base
 import LinearAlgebra: dot
 
-export StandardBasis
+export StandardBasis, StandardUnitVector
 
 # Needed if we want to allow the recursive parent-child pattern relationship
 # between StandardBasis and StandardUnitVector
 # abstract type AbstractBasis{V<:AbstractVector} <: AbstractVector{V} end
 
 """
-    StandardUnitVector(i...)
+    StandardUnitVector(i, n)
 
-Represents a standard unit vector of a vector space formed by the
-tensor product of `N` vector spaces.
+Represents a standard unit vector of a vector space of dimension `n`.
 """
 struct StandardUnitVector <: AbstractVector{Bool}
-    length::Int
     i::Int
-    function StandardUnitVector(length::Integer, i::Integer)
-        0 < i ≤ length || throw(DomainError("No dimension $i in vector space with dimension $length"))
-        new(length, i)
+    length::Int
+    function StandardUnitVector(i::Int, length::Int)
+        # FIXME: check below causes (expected) performance overhead...
+        # 1 ≤ i ≤ length || throw(ArgumentError("$i out of bounds with $length"))
+        # This is OK as long as we use dynamic
+        @boundscheck 1 ≤ i ≤ length || throw(DomainError(i, "invalid direction"))
+        # TODO: make this error more like the BoundsError for an array
+        new(i, length)
     end
 end
 
+StandardUnitVector(i, length) =
+    StandardUnitVector(convert(Int, i), convert(Int, length))
+
+@noinline _domain_error(i) = throw(DomainError(i, "out of bounds"))
+
 const StdUnitVec = StandardUnitVector
 
+Base.IndexStyle(::Type{<:StdUnitVec}) = IndexLinear()
 Base.size(e::StdUnitVec) = (e.length,)
 
-Base.IndexStyle(::Type{<:StdUnitVec}) = IndexLinear()
-
-function Base.getindex(e::StdUnitVec, i::Int)
+@inline function Base.getindex(e::StdUnitVec, i::Int)
     @boundscheck checkbounds(e, i)
     e.i == i
 end
@@ -36,41 +42,53 @@ end
 Base.show(io::IO, e::StdUnitVec) = print(io, typeof(e), "(", e.i, ")")
 Base.show(io::IO, ::MIME"text/plain", e::StdUnitVec) =
     print(io, e, "\n  ", "𝐞̂", e.i,
-          " ", "(standard unit vector of a vector space of dimension $(length(e)))")
+          " ", "(standard unit vector of a $(length(e))-dimensional vector space")
 
-function dot(e1::StdUnitVec, e2::StdUnitVec)
+Base.:(==)(e1::StdUnitVec, e2::StdUnitVec) = e1 === e2
+
+@inline Base.@assume_effects :foldable function dot(e1::StdUnitVec, e2::StdUnitVec)
     length(e1) == length(e2) ||
         throw(DimensionMismatch("length of the first vector ($(length(e1))) does not match the length of the second ($(length(e2)))"))
-    length(e1) == 0 ? false : e1.i == e2.i
+    e1 == e2
+    # ifelse(length(e1) == 0, false, e1 == e2)  # XXX: slower, but why?
 end
 # dot(e1::StdUnitVec, e2::StdUnitVec) => throw an error?
 
-function dot(e::StdUnitVec, v::AbstractVector)
+@inline function dot(e::StdUnitVec, v::AbstractVector)
     length(e) == length(v) ||
         throw(DimensionMismatch("standard unit vector has length $(length(e)), which does not match the length of the array $(length(v))"))
-    length(e) == 0 ? zero(eltype(v)) : v[e.i]
+    v[e.i]
 end
 
-dot(v::AbstractVector, e::StdUnitVec) = dot(e, v)  # commute
+@inline dot(v::AbstractVector, e::StdUnitVec) = dot(e, v)  # commute
+
+# TODO: matrix multiplication and `'` (hermetian) operations
 
 
 """
-    StandardBasis(n)
+    StandardBasis(N)
 
 Represents the standard or canoncical basis of a vector space with dimension
-`n`, and serves as a collection of the standard unit vectors.
+`N`, and serves as a collection of the standard unit vectors.
 """
-struct StandardBasis <: AbstractVector{StandardUnitVector}
+struct StandardBasis
     ndims::Int
-    function StandardBasis(n::Integer)
+    function StandardBasis(n::Int)
         n ≥ 0 || throw(DomainError("Dimension of vector space must be nonnegative"))
         new(n)
     end
 end
 
-Base.size(basis::StandardBasis) = (basis.ndims,)
+StandardBasis(n) = StandardBasis(convert(Int, n))
+StandardBasis(n, dim) = StandardBasis(n)[dim]
 
-Base.IndexStyle(::Type{<:StandardBasis}) = IndexLinear()
+Base.ndims(::Type{StandardBasis}) = 1
+Base.IteratorSize(T::Type{StandardBasis}) = Base.HasShape{ndims(T)}()
+Base.IteratorEltype(::Type{StandardBasis}) = StandardUnitVector
+Base.IndexStyle(::Type{StandardBasis}) = IndexLinear()
 
-Base.getindex(basis::StandardBasis, i::Integer) =
-    StandardUnitVector(basis.ndims, i)
+Base.length(b::StandardBasis) = b.ndims
+Base.size(b::StandardBasis) = (length(b),)
+
+@inline Base.getindex(b::StandardBasis, i) =
+    StandardUnitVector(i, b.ndims)
