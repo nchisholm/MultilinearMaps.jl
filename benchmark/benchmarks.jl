@@ -38,16 +38,6 @@ const onlytrue = MultilinearMap(() -> true, ())
 const inner = MultilinearMap(dot, static((3,3)))
 const skew = MultilinearMap(_skew, static((3,3,3,3)))
 
-# println("Function of indices")
-# @btime fillfn_nloops!(A, skew_ixfn) setup=(A = MArray{NTuple{4,3},Int64}(undef))
-# println("(Bare) function of unit vectors")
-# @btime(fillfn_nloops!(A, _skew ∘ inds2uvecs), setup=(A = MArray{NTuple{4,3},Int64}(undef)))
-# println("Function of unit vectors")
-# @btime(fillfn_nloops!(A, Base.splat(skew) ∘ inds2uvecs), setup=(A = MArray{NTuple{4,3},Int64}(undef)))
-# println("Function of unit vectors (indexing)")
-# @btime(fill_nloops!(A, skew), setup=(A = MArray{NTuple{4,3},Int64}(undef)))
-# println("sacollect")
-# @btime sacollect(SArray{NTuple{4,3}}, skew)
 
 const SUITE = BenchmarkGroup(
     [],
@@ -60,5 +50,7 @@ const SUITE = BenchmarkGroup(
     "MultilinearMap (materialize)" =>
         @benchmarkable(materialize!(A, skew), setup=(A = MArray{NTuple{4,3},Int64}(undef))),
     "MultilinearMap (iteration)" =>
-        @benchmarkable(StaticArrays.sacollect(SArray{NTuple{4,3}}, skew))
+        @benchmarkable(StaticArrays.sacollect(SArray{NTuple{4,3}}, skew)),
+    "MultilinearMap (iteration2)" =>
+        @benchmarkable(materialize(SArray, skew))
 )

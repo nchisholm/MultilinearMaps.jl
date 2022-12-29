@@ -116,10 +116,6 @@ let e1 = SVector(1.,0,0),
 end;
 #+end_src
 
-#+RESULTS:
-: A_1231 = _skew(e1, e2, e3, e1) = 0.0
-: A_1212 = _skew(e1, e2, e1, e2) = 1.0
-
 Now, this is not as efficient as it could be we are using ~LinearAlgebra.dot~ (~⋅~) on "literal" unit vectors, so there is going to be some unnecesary ~0*0~ or ~1*0~ operations.
 
 ** Functions on indices
@@ -176,14 +172,6 @@ let A = MArray{NTuple{4,3},Float64}(undef)
 end
 #+end_src
 
-#+RESULTS:
-:   Using `CartesianIndices`
-:   96.924 ns (0 allocations: 0 bytes)
-:   Using `Base.Cartesian`
-:   13.016 ns (0 allocations: 0 bytes)
-: `SArray` via `sacollect`
-:   13.297 ns (0 allocations: 0 bytes)
-
 *Developer Note.*
 Use of ~sacollect~ is most efficient because it effectively unrolls all the loops.
 However, using approaches with looping might be beneficial in cases where loop unrolling would create too much work for the compiler.
@@ -212,15 +200,6 @@ let b = StandardBasis(3)
     @btime [e1 ⋅ e2 for e1 ∈ $b, e2 ∈ $b]
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   32.705 ns (1 allocation: 64 bytes)
-: 3×3 Matrix{Bool}:
-:  1  0  0
-:  0  1  0
-:  0  0  1
-:END:
 
 Note that the matrix elements are of type ~Bool~.
 This is a direct result of the boolean tests performed for each element of the matrix.
@@ -274,10 +253,6 @@ using Test
 end;
 #+end_src
 
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[33m[1mBroken  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: Unit Vectors  | [32m  23  [39m[33m     1  [39m[36m   24  [39m[0m1.7s
-
 ** Performance
 
 When creating a unit vector, one generally wants to validate that its direction is appropriate for the vector space, i.e., ~1 ≤ d ≤ D~.
@@ -298,12 +273,6 @@ out_uvs = @btime(fillfn_nloops!(A, _skew ∘ inds2uvecs),
                   setup=(A = MArray{NTuple{4,3},Int64}(undef)))
 @assert out_ixfn == out_uvs
 #+end_src
-
-#+RESULTS:
-: Function of indices
-:   22.087 ns (0 allocations: 0 bytes)
-: Funcion of unit vectors
-:   17.653 ns (0 allocations: 0 bytes)
 
 Interestingly, completely explicit loops are little faster, but why?
 
@@ -340,20 +309,6 @@ const inner = MultilinearMap(dot, static((3,3)))
 const skew = MultilinearMap(_skew, static((3,3,3,3)))
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-# [goto error]
-: invalid redefinition of constant inner
-:
-: Stacktrace:
-:  [1] top-level scope
-:    @ In[13]:4
-:  [2] eval
-:    @ ./boot.jl:368 [inlined]
-:  [3] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-:    @ Base ./loading.jl:1428
-:END:
-
 Check that things work correctly.
 
 #+begin_src jupyter-julia
@@ -386,10 +341,6 @@ using Test
     @test skew(u,v,v,u) == -1
 end;
 #+end_src
-
-#+RESULTS:
-: [0m[1mTest Summary:             | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: MultilinearMap Evaluation | [32m   9  [39m[36m    9  [39m[0m0.1s
 Check that things work efficiently (no allocations, e.g.).
 
 #+begin_src jupyter-julia :results scalar
@@ -406,12 +357,6 @@ let u = SVector(1, 0, 0), v = SVector{3}(0, 1, 0)
 end
 #+end_src
 
-#+RESULTS:
-: Contraction, map with argument dimensions (3, 3)
-:   2.304 ns (0 allocations: 0 bytes)
-: Contraction, map with argument dimensions (3, 3, 3, 3)
-:   4.749 ns (0 allocations: 0 bytes)
-
 ** Partial application (contraction)
 
 We can think of a ~MultilinearMap~ applied to only ~N~ of its ~K~ arguments as a similar multilinear map of order ~K-N~.
@@ -427,12 +372,6 @@ let basis = StandardBasis(3)
     [x(e) for e ∈ basis]
 end
 #+end_src
-
-#+RESULTS:
-: 3-element Vector{Int64}:
-:  1
-:  2
-:  3
 
 Some tests:
 
@@ -462,10 +401,6 @@ Some tests:
     end
 end;
 #+end_src
-
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[33m[1mBroken  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: PartialMap    | [32m   3  [39m[33m     3  [39m[36m    6  [39m[0m1.0s
 We might want more functionality in the future, like the ability to permute the argument order of the vector arguments.
 We leave that to later work.
 
@@ -478,15 +413,6 @@ We can now produce an identity matrix as follows by using ~inner~, defined above
     sb = StandardBasis(3)
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   33.542 ns (1 allocation: 64 bytes)
-: 3×3 Matrix{Bool}:
-:  1  0  0
-:  0  1  0
-:  0  0  1
-:END:
 
 However, much convenience is provided by implementing the [[https://docs.julialang.org/en/v1/manual/interfaces/][iteration and indexing interfaces]] for ~MultilinearForm~​s.
 This will allow us to "collect" a ~MultilinearForm~ into an array container like ~Array~ or ~SArray~ using ~collect~ or ~StaticArrays.sacollect~, respectively.
@@ -506,14 +432,6 @@ Note that when ~@inbounds~ is used, unit vectors are unsafely constructed, witho
 @btime inner[1,3]
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   1.202 ns (0 allocations: 0 bytes)
-:   1.202 ns (0 allocations: 0 bytes)
-:   1.202 ns (0 allocations: 0 bytes)
-: false
-:END:
-
 
 ** Iteration and Collection
 
@@ -529,15 +447,6 @@ let
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   7.662 ns (0 allocations: 0 bytes)
-: 3×3 SMatrix{3, 3, Bool, 9} with indices SOneTo(3)×SOneTo(3):
-:  1  0  0
-:  0  1  0
-:  0  0  1
-:END:
-
 Since the size of each dimension is usually small and a fixed constant, we integrate with ~StaticArrays~.
 #+begin_src jupyter-julia
 @testset "StaticArrays traits" begin
@@ -547,10 +456,6 @@ Since the size of each dimension is usually small and a fixed constant, we integ
     @test StaticArrays.Size(skew) == StaticArrays.Size(3,3,3,3)
 end;
 #+end_src
-
-#+RESULTS:
-: [0m[1mTest Summary:       | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: StaticArrays traits | [32m   4  [39m[36m    4  [39m[0m0.0s
 
 We can collect after contraction / "slicing", too.
 Let's get a slice or two of the ~skew~ tensor 🍕.
@@ -564,10 +469,6 @@ Let's get a slice or two of the ~skew~ tensor 🍕.
 end;
 #+end_src
 
-#+RESULTS:
-: [0m[1mTest Summary:     | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: More contractions | [32m   2  [39m[36m    2  [39m[0m0.9s
-
 Note that components of the tensor the user has not asked for are never computed.
 
 *** Materialization
@@ -577,9 +478,6 @@ Create an array of type ~T~ filled with the components of ~f~.
 #+begin_src jupyter-julia
 @btime materialize!(A, skew) setup=(A = MArray{NTuple{4,3},Int64}(undef));
 #+end_src
-
-#+RESULTS:
-:   10.416 ns (0 allocations: 0 bytes)
 
 ** Validity & Performance Checks
 
@@ -594,40 +492,6 @@ let
 end;
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-# [goto error]
-#+begin_example
-UndefVarError: materialize not defined
-
-Stacktrace:
-  [1] var"##core#402"(solo#389::MultilinearMap{Tuple{}, var"#14#15"})
-    @ Main ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:489
-  [2] var"##sample#403"(::Tuple{MultilinearMap{Tuple{}, var"#14#15"}}, __params::BenchmarkTools.Parameters)
-    @ Main ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:495
-  [3] _run(b::BenchmarkTools.Benchmark, p::BenchmarkTools.Parameters; verbose::Bool, pad::String, kwargs::Base.Pairs{Symbol, Integer, NTuple{4, Symbol}, NamedTuple{(:samples, :evals, :gctrial, :gcsample), Tuple{Int64, Int64, Bool, Bool}}})
-    @ BenchmarkTools ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:99
-  [4] #invokelatest#2
-    @ ./essentials.jl:731 [inlined]
-  [5] #run_result#45
-    @ ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:34 [inlined]
-  [6] run(b::BenchmarkTools.Benchmark, p::BenchmarkTools.Parameters; progressid::Nothing, nleaves::Float64, ndone::Float64, kwargs::Base.Pairs{Symbol, Integer, NTuple{5, Symbol}, NamedTuple{(:verbose, :samples, :evals, :gctrial, :gcsample), Tuple{Bool, Int64, Int64, Bool, Bool}}})
-    @ BenchmarkTools ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:117
-  [7] #warmup#54
-    @ ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:169 [inlined]
-  [8] warmup(item::BenchmarkTools.Benchmark)
-    @ BenchmarkTools ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:168
-  [9] macro expansion
-    @ ~/.julia/packages/BenchmarkTools/0owsb/src/execution.jl:575 [inlined]
- [10] top-level scope
-    @ In[10]:5
- [11] eval
-    @ ./boot.jl:368 [inlined]
- [12] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-    @ Base ./loading.jl:1428
-#+end_example
-:END:
-
 
 #+begin_src jupyter-julia
 let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
@@ -637,14 +501,6 @@ let u = SVector{3}(1:3), v = SVector{3}(3:-1:1)
     @test out1 == out2
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   12.724 ns (0 allocations: 0 bytes)
-:   1.956 ns (0 allocations: 0 bytes)
-:   2.235 ns (0 allocations: 0 bytes)
-: [32m[1mTest Passed[22m[39m
-:END:
 
 
 * Linear Combinations of Multilinear Maps
@@ -681,10 +537,6 @@ That is, we can take linear combinations of multilinear maps and generally produ
     end
 end;
 #+end_src
-
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: Vector Space  | [32m  12  [39m[36m   12  [39m[0m0.9s
 
 
 * Spherical harmonics
@@ -748,10 +600,6 @@ _issymmetric(A::AbstractArray{<:Any, 2}) =
     end
 end;
 #+end_src
-
-#+RESULTS:
-: [0m[1mTest Summary: | [22m[32m[1mPass  [22m[39m[36m[1mTotal  [22m[39m[0m[1mTime[22m
-: Harmonics     | [32m  22  [39m[36m   22  [39m[0m0.7s
 Lets check the performance of these functions.
 
 #+begin_src jupyter-julia
@@ -781,23 +629,6 @@ bmarks = let
     @btime sphharm33(n̂[])(u[], v[], w[]) setup=(n̂=$(Ref(n̂)); u=$(Ref(u)); v=$(Ref(v)); w=$(Ref(w)))
 end;
 #+end_src
-
-#+RESULTS:
-#+begin_example
-Second order form
-  all components -> 3x3 matrix
-  2.793 ns (0 allocations: 0 bytes)
-  single contraction -> length-3 vector  (matrix-vector prodct)
-  2.305 ns (0 allocations: 0 bytes)
-  double contraction -> scalar  (quadratic form)
-  3.771 ns (0 allocations: 0 bytes)
-
-Third order form
-  all components -> 3x3x3 array11.885 ns (0 allocations: 0 bytes)
-  single contraction -> 3x3 matrix33.127 ns (0 allocations: 0 bytes)
-  double contraction -> length-3 vector13.226 ns (0 allocations: 0 bytes)
-  full contraction -> scalar5.308 ns (0 allocations: 0 bytes)
-#+end_example
 
 It seems to be as good as we can expect.
 
@@ -834,15 +665,6 @@ end
 @btime SArray(stokeslet(x)) setup=(x=SVector{3,Float64}(1.,2,3))
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   1.396 ns (0 allocations: 0 bytes)
-: 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
-:  0.0113936   0.00151914  0.00227871
-:  0.00151914  0.0136723   0.00455742
-:  0.00227871  0.00455742  0.0174701
-:END:
-
 We are left with a matrix of the components of our favorite (symmetric) tensor.
 We can also contract the Stokeslet with a (force) vector to give the Stokeslet velocity field at a given point.
 #+begin_src jupyter-julia
@@ -852,15 +674,6 @@ We can also contract the Stokeslet with a (force) vector to give the Stokeslet v
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   6.146 ns (0 allocations: 0 bytes)
-: 3-element SVector{3, Float64} with indices SOneTo(3):
-:  0.03949766576529538
-:  0.036459383783349585
-:  0.033421101801403785
-:END:
-
 #+begin_src jupyter-julia
 let x = normalize(rand(SVector{3}))
     f = normalize(rand(SVector{3}))
@@ -869,16 +682,6 @@ let x = normalize(rand(SVector{3}))
 end
 #+end_src
 
-#+RESULTS:
-: 3-element SVector{3, Float64} with indices SOneTo(3):
-:  0.0550900614961036
-:  0.01987703297886065
-:  0.029989046413666134
-: 3-element SVector{3, Float64} with indices SOneTo(3):
-:  0.0
-:  0.0
-:  0.0
-
 If we use a ~StdUnitVector~ as one of the vectors, we should get the corresponding column/row of the Stokeslet as a matrix.
 #+begin_src jupyter-julia
 @btime SArray(stokeslet(x)(:,f)) setup=begin
@@ -886,15 +689,6 @@ If we use a ~StdUnitVector~ as one of the vectors, we should get the correspondi
     f = ê{3}(2)  # take second row/col
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   5.587 ns (0 allocations: 0 bytes)
-: 3-element SVector{3, Float64} with indices SOneTo(3):
-:  0.0015191409909728994
-:  0.013672268918756093
-:  0.004557422972918698
-:END:
 
 Computational cost is reduced if you contract the Stokeslet with a vector because the "full" matrix is never formed.
 Contraction with a unit vector is even cheaper, since it is equivalent to forming just one row of the Stokeslet.
@@ -908,12 +702,6 @@ We can even compute just a single component of the velocity as a scalar.
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   5.657 ns (0 allocations: 0 bytes)
-: 0.053709744814769436
-:END:
-
 As it is possible to pick out a row/column, it is also possible to pick out just one component of the Stokeslet by feeding it two ~StdUnitVector~​s.
 #+begin_src jupyter-julia
 @btime stokeslet(x)(e,f) setup=begin
@@ -923,19 +711,10 @@ As it is possible to pick out a row/column, it is also possible to pick out just
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   0.908 ns (0 allocations: 0 bytes)
-: 0.0015191409909728994
-:END:
-
 Note that, in all cases, most of the computational cost of evaluating a Stokeslet is actually due to computation of the spatial dependence (taking ~norm(x)~, etc.), though this can be somewhat reduced by annotating the definition of ~stokeslet~ with ~@fastmath~.
 #+begin_src jupyter-julia
 @btime stokeslet(x) setup=(x = SVector{3}(1., 2., 3.));
 #+end_src
-
-#+RESULTS:
-:   0.908 ns (0 allocations: 0 bytes)
 
 Without all this machinery, the Stokeslet is not too hard to express using facilities from ~Base~ and ~LinearAlgebra~.
 #+begin_src jupyter-julia
@@ -947,15 +726,6 @@ function stokeslet2(x)
 end
 @btime stokeslet2(SVector(1.,2,3))
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   0.978 ns (0 allocations: 0 bytes)
-: 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
-:  0.0113936   0.00151914  0.00227871
-:  0.00151914  0.0136723   0.00455742
-:  0.00227871  0.00455742  0.0174701
-:END:
 
 Our code is actually a hair faster it seems!
 
@@ -974,16 +744,6 @@ let f = normalize(rand(SVector{3}))
     @btime stokeslet_dot_f($x, $f)
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-:   11.745 ns (0 allocations: 0 bytes)
-:   6.565 ns (0 allocations: 0 bytes)
-: 3-element SVector{3, Float64} with indices SOneTo(3):
-:  0.013356054280542111
-:  0.04485924418011487
-:  0.04450259546470775
-:END:
 
 If we include third order tensors (e.g. stresslets), the ergonomic advantages of ~MultilinearForms~ are significantly more apparent.
 
@@ -1017,16 +777,6 @@ end
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-:   44.868 ns (0 allocations: 0 bytes)
-:   20.946 ns (0 allocations: 0 bytes)
-: 3-element SVector{3, Float64} with indices SOneTo(3):
-:  -0.004385382300375992
-:   0.0008770764600751983
-:   0.0008770764600751984
-:END:
-
 #+begin_src jupyter-julia :results scalar
 let
     e = StdBasis{3}(Real)
@@ -1037,9 +787,6 @@ let
     @test stresslet_x(:,f,n) - stresslet_x(:,f,n) == (stresslet_x - stresslet_x)(:,f,n)
 end
 #+end_src
-
-#+RESULTS:
-: [32m[1mTest Passed[22m[39m
 
 /Note:/ speed depends somewhat on order of arguments ~n~ and ~f~. It would be cool to someday have something that optimized loop ordering.  (Though maybe that should be left to the compiler.)
 
@@ -1088,32 +835,6 @@ let e = StdBasis{3}(Real)
 end
 #+end_src
 
-#+RESULTS:
-:RESULTS:
-# [goto error]
-#+begin_example
-type StdUnitVector has no field dimension
-
-Stacktrace:
- [1] getproperty
-   @ ./Base.jl:38 [inlined]
- [2] _wedge
-   @ ~/Development/julia/MultilinearMaps/src/exterior.jl:104 [inlined]
- [3] wedge
-   @ ~/Development/julia/MultilinearMaps/src/exterior.jl:90 [inlined]
- [4] (AtomicMultilinearMap{3, Tuple{StaticInt{3}, StaticInt{3}, StaticInt{3}}})(impl::typeof(wedge))
-   @ MultilinearMaps ~/Development/julia/MultilinearMaps/src/MultilinearMap.jl:61
- [5] (MultilinearForm{3, 3})(f::Function)
-   @ MultilinearMaps ~/Development/julia/MultilinearMaps/src/MultilinearMap.jl:7
- [6] top-level scope
-   @ In[54]:6
- [7] eval
-   @ ./boot.jl:368 [inlined]
- [8] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-   @ Base ./loading.jl:1428
-#+end_example
-:END:
-
 #+begin_src jupyter-julia
 using MultilinearMaps.Special: wedge, _wedge
 
@@ -1127,20 +848,6 @@ let e = StdBasis{3}(Real)
     @btime typeof(wedge($e[3], $L, $x))
 end
 #+end_src
-
-#+RESULTS:
-:RESULTS:
-# [goto error]
-: too many parameters for type
-:
-: Stacktrace:
-:  [1] top-level scope
-:    @ In[55]:7
-:  [2] eval
-:    @ ./boot.jl:368 [inlined]
-:  [3] include_string(mapexpr::typeof(REPL.softscope), mod::Module, code::String, filename::String)
-:    @ Base ./loading.jl:1428
-:END:
 
 ** Evaluation at multiple points
 

@@ -8,32 +8,6 @@ const SDims = TupleN{SDim}
 const SOneTo{L} = Arr.OptionallyStaticUnitRange{StaticInt{1}, StaticInt{L}}
 const Axes{N} = NTuple{N,AbstractUnitRange}
 
-
-# Concatenate ("splat") n tuples into one big tuple
-@inline tuplejoin(t::Tuple) = joinargs(t...)
-@inline tuplejoin_deep(t::Tuple) = joinargs_deep(t...)
-
-@inline joinargs() = ()
-@inline joinargs(a, rest...) = (a, joinargs(rest...)...)
-@inline joinargs(a::Tuple, rest...) = (a..., joinargs(rest...)...)
-
-@inline joinargs_deep() = ()
-@inline joinargs_deep(a, rest...) = (a, joinargs_deep(rest...)...)
-@inline joinargs_deep(t::Tuple, rest...) =
-    (joinargs_deep(t...)..., joinargs_deep(rest...)...)
-
-# Return the types contained in a tuple (fieldtypes itself is not type stable)
-@generated tupletypes(::Type{T}) where {T<:Tuple} = fieldtypes(T)
-@generated tuplecount(::Type{T}) where {T<:Tuple} = fieldcount(T)
-@inline tupletype(::Type{T}, i) where {T<:Tuple} = fieldtype(T, i)
-
-# From a given tuple, return the same tuple but with elements of a given type
-# `T` removed.
-@inline _removetype(::Type, ::Tuple{}) = ()
-@inline _removetype(::Type{T}, (_, rest...)::Tuple{T,Vararg}) where T =
-    _removetype(T, rest)
-@inline _removetype(T::Type, (x, rest...)::Tuple) = (x, _removetype(T, rest)...)
-
 _mlkernel(u, v) = one(eltype(u)) * one(eltype(v)) + one(eltype(u)) * one(eltype(v))
 # NOTE: there is a function with this name in Base we could replace this with.
 # @inline promote_eltype(Ts...) = promote_type(map(eltype, Ts)...)
@@ -112,35 +86,6 @@ end
     ls = map(dynamic ∘ Arr.length, as)
     throw(DimensionMismatch("lengths $ls of inputs do not match"))
 end
-
-"""
-Fill an `N`-dimensional array `arr` using a function `f` of the `N` indices.
-"""
-@generated function fillfn!(arr::AbstractArray{<:Any,N}, f::F) where {N,F}
-    quote
-        @nloops $N i arr begin
-            @inbounds (@nref $N arr i) = (@ncall $N f i)
-        end
-        arr
-    end
-end
-
-# Similar to the function above, but instead iterates over `CartesianIndices`.
-# Its code is idomatic, but for some reason has poorer performance
-# versus the "explicit looping" of the generated function above.
-#
-# https://github.com/JuliaArrays/StaticArrays.jl/issues/1010
-#
-"""
-Fill an `N`-dimensional array `arr` using a function `f` of the `N` indices.
-"""
-function fillfn_cartesianindices!(arr, f::F) where F  # force specialization
-    for I ∈ CartesianIndices(arr)
-        @inbounds arr[I] = f(I)
-    end
-    return arr
-end
-
 
 # Produce the operands of a lazy operator
 # Generically assume instances of P have a field called operands

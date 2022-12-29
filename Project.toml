@@ -8,14 +8,20 @@ ArrayInterface = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
 ArrayInterfaceStaticArrays = "b0d46f97-bff5-4637-a19a-dd75974142cd"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
-StaticArraysCore = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
 julia = "1.7"
 
 [extras]
-BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+ArrayInterface = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
+ArrayInterfaceStaticArrays = "b0d46f97-bff5-4637-a19a-dd75974142cd"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+
 [targets]
-test = ["Test"]
+test = ["Test", "ArrayInterface", "ArrayInterfaceStaticArrays", "LinearAlgebra", "Static", "StaticArrays"]
