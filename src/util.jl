@@ -5,9 +5,6 @@ const SDim = StaticInt
 const Dims = TupleN{Dim}
 const SDims = TupleN{SDim}
 
-const SOneTo{L} = Arr.OptionallyStaticUnitRange{StaticInt{1}, StaticInt{L}}
-const Axes{N} = NTuple{N,AbstractUnitRange}
-
 _mlkernel(u, v) = one(eltype(u)) * one(eltype(v)) + one(eltype(u)) * one(eltype(v))
 # NOTE: there is a function with this name in Base we could replace this with.
 # @inline promote_eltype(Ts...) = promote_type(map(eltype, Ts)...)
