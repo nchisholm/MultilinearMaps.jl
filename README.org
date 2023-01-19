@@ -1,5 +1,7 @@
 #+title: MultilinearMaps.jl
 
+[[file:logo.svg][Logo]]
+
 * Summary
 
 A work-in-progress Julia package for defining and working with [[wikipedia:Multilinear map][multilinear maps]], i.e., functions that have a multidimensional array representation.
