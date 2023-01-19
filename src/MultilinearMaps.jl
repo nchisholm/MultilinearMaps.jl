@@ -12,17 +12,11 @@ using ArrayInterfaceStaticArrays
 
 export materialize!, materialize
 
-# include("imports.jl")
 include("util.jl")
 include("FixedFunctions.jl")
 include("LinearFunctionSpaces.jl")
 include("StandardBasis.jl")
 include("MultilinearMap.jl")
-include("algebra.jl")
-# include("PartialMap.jl")
-# include("arraylike.jl")
-# include("materialize.jl")
-# include("exterior.jl")
 
 materialize!(tgt::AbstractArray, f::MultilinearMap) =
     (samesize(tgt, f); _unsafe_materialize!(tgt, f))

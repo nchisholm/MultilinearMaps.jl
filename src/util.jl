@@ -1,3 +1,4 @@
+const Maybe{T} = Union{T,Nothing}
 const TupleN{T,N} = NTuple{N,T}
 
 const Dim = Union{StaticInt, Int}
@@ -5,24 +6,13 @@ const SDim = StaticInt
 const Dims = TupleN{Dim}
 const SDims = TupleN{SDim}
 
-_mlkernel(u, v) = one(eltype(u)) * one(eltype(v)) + one(eltype(u)) * one(eltype(v))
-# NOTE: there is a function with this name in Base we could replace this with.
-# @inline promote_eltype(Ts...) = promote_type(map(eltype, Ts)...)
-
-
-const Maybe{T} = Union{T,Nothing}
-
 # Apply f to arg, or return nothing if arg is nothing
 @inline maybe(f, arg) = f(arg)
 @inline maybe(_, ::Nothing) = nothing
 
-# generalized version?
-# @inline maybe(f, args...) = f(args...)
-# @inline maybe(_, ::Vararg{Maybe}) = nothing
-
-# @inline apply(args::Tuple, f::F) where F = f(args...)
-# @inline apply(args::Tuple) = f -> apply(args, f)
-
+_mlkernel(u, v) = one(eltype(u)) * one(eltype(v)) + one(eltype(u)) * one(eltype(v))
+# NOTE: there is a function with this name in Base we could replace this with.
+# @inline promote_eltype(Ts...) = promote_type(map(eltype, Ts)...)
 
 """
     samesize(as...)
@@ -98,4 +88,24 @@ subscripts(i::Integer) = join(subscript(d) for d ∈ reverse!(digits(i)))
 function _valid_scriptdigit(d::Integer)
     0 ≤ d ≤ 9 || throw(DomainError(d, "Must be a digit between 0 and 9"))
     return d
+end
+
+
+macro singleton(expr)
+    if Meta.isexpr(expr, :call) && first(expr.args) == :isa
+        _, name, supertype = expr.args
+    elseif expr isa Symbol
+        name = expr
+        supertype = :Any
+    else
+        throw(ArgumentError("Expected a symbol or an \"isa\" expression."))
+    end
+
+    typename = Symbol("#", name)
+
+    return quote
+        struct $typename <: $(esc(supertype)) end
+        const $(esc(name)) = $(esc(typename))()
+        Base.@__doc__($(esc(name)))
+    end
 end
